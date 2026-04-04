@@ -1,0 +1,85 @@
+name: Build & Release Debug APK
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+  workflow_dispatch:
+
+# Minimum permissions: contents write to create releases, nothing else needed
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Build debug APK
+        # Keystore is committed in keystore/release.jks.
+        # Set KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD as repository secrets,
+        # or use the documented defaults from keystore/README.md for public forks.
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || 'occlient123' }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'oc-client' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'occlient123' }}
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Get version info
+        id: version
+        run: |
+          VERSION_NAME=$(grep -o 'versionName = "[^"]*"' app/build.gradle.kts | grep -o '"[^"]*"' | tr -d '"')
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "tag=v${VERSION_NAME}-debug-${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "name=OC Client Debug ${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Rename APK
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          cp app/build/outputs/apk/debug/app-debug.apk \
+             app/build/outputs/apk/debug/oc-client-debug-${SHORT_SHA}.apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.name }}
+          body: |
+            Debug APK built from commit ${{ github.sha }}
+
+            ${{ github.event.pull_request && format('PR #{0}: {1}', github.event.pull_request.number, github.event.pull_request.title) || 'Manual trigger' }}
+
+            ### Installation
+            1. Download the APK below
+            2. Enable "Install from unknown sources" on your Android device
+            3. Install the APK
+            4. Configure SSH settings in the app
+
+            ### Signing
+            Built with the repository keystore for consistent update delivery.
+          files: |
+            app/build/outputs/apk/debug/oc-client-debug-*.apk
+          prerelease: true
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
