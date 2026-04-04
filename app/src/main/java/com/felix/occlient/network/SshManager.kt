@@ -3,6 +3,7 @@ package com.felix.occlient.network
 import com.jcraft.jsch.ChannelShell
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.JSchException
+import com.jcraft.jsch.Logger as JSchLogger
 import com.jcraft.jsch.Session
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -10,6 +11,8 @@ import kotlinx.coroutines.flow.StateFlow
 import java.io.InputStream
 import java.io.OutputStream
 import java.io.PrintStream
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 
 enum class SshConnectionState {
     DISCONNECTED, CONNECTING, CONNECTED, ERROR
@@ -27,6 +30,8 @@ class SshManager {
     companion object {
         /** Interval between polls when no SSH data is available, in milliseconds. */
         private const val SSH_READ_POLL_INTERVAL_MS = 50L
+
+        private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
     }
 
     private val _connectionState = MutableStateFlow(SshConnectionState.DISCONNECTED)
@@ -46,7 +51,8 @@ class SshManager {
     var onOutputReceived: ((String) -> Unit)? = null
 
     fun appendLog(message: String) {
-        _logs.value = _logs.value + message
+        val timestamp = LocalTime.now().format(timeFormatter)
+        _logs.value = _logs.value + "[$timestamp] $message"
     }
 
     suspend fun connect(config: SshConfig): Result<Unit> = withContext(Dispatchers.IO) {
@@ -54,10 +60,35 @@ class SshManager {
         appendLog("Connecting to ${config.host}:${config.port} as ${config.username}...")
         try {
             val jsch = JSch()
+            // Capture JSch-level warnings and errors to aid troubleshooting
+            JSch.setLogger(object : JSchLogger {
+                override fun isEnabled(level: Int): Boolean = level >= JSchLogger.WARN
+                override fun log(level: Int, message: String) {
+                    val prefix = when (level) {
+                        JSchLogger.WARN -> "[JSch WARN]"
+                        JSchLogger.ERROR -> "[JSch ERROR]"
+                        JSchLogger.FATAL -> "[JSch FATAL]"
+                        else -> "[JSch INFO]"
+                    }
+                    appendLog("$prefix $message")
+                }
+            })
             if (config.privateKey.isNotBlank()) {
-                val keyBytes = config.privateKey.trimIndent().toByteArray(Charsets.UTF_8)
+                // Normalize line endings to LF to avoid PEM parsing failures with keys from Windows/macOS
+                val normalizedKey = config.privateKey.trimIndent()
+                    .replace("\r\n", "\n")
+                    .replace("\r", "\n")
+                val keyBytes = normalizedKey.toByteArray(Charsets.UTF_8)
                 jsch.addIdentity("key", keyBytes, null, null)
-                appendLog("Using private key authentication")
+                val keyType = when {
+                    normalizedKey.contains("BEGIN OPENSSH PRIVATE KEY") -> "OpenSSH"
+                    normalizedKey.contains("BEGIN RSA PRIVATE KEY") -> "RSA (PKCS#1)"
+                    normalizedKey.contains("BEGIN EC PRIVATE KEY") -> "EC (PKCS#1)"
+                    normalizedKey.contains("BEGIN DSA PRIVATE KEY") -> "DSA (PKCS#1)"
+                    normalizedKey.contains("BEGIN PRIVATE KEY") -> "PKCS#8"
+                    else -> "unknown format"
+                }
+                appendLog("Using private key authentication ($keyType, ${keyBytes.size} bytes)")
             }
             val session = jsch.getSession(config.username, config.host, config.port)
             // Note: host key verification is disabled for simplicity since users connect to their own servers.
@@ -83,7 +114,13 @@ class SshManager {
             startReading()
             Result.success(Unit)
         } catch (e: JSchException) {
-            val msg = "SSH connection failed: ${e.message}"
+            val causeChain = generateSequence(e as Throwable) { t -> t.cause?.takeIf { it != t } }
+                .drop(1)
+                .joinToString(" → ") { it.message ?: it.javaClass.simpleName }
+            val msg = buildString {
+                append("SSH connection failed: ${e.message}")
+                if (causeChain.isNotEmpty()) append("\nCause: $causeChain")
+            }
             appendLog(msg)
             _connectionState.value = SshConnectionState.ERROR
             Result.failure(Exception(msg, e))

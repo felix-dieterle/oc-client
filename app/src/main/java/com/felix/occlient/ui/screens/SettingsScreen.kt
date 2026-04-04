@@ -48,12 +48,12 @@ fun SettingsScreen(
                 try {
                     val content = withContext(Dispatchers.IO) {
                         context.contentResolver.openInputStream(uri)?.use { stream ->
-                            stream.bufferedReader().readText()
+                            stream.bufferedReader(Charsets.UTF_8).readText()
                         }.orEmpty()
                     }
                     privateKey = content
                 } catch (e: Exception) {
-                    snackbarHostState.showSnackbar("Failed to read key file")
+                    snackbarHostState.showSnackbar("Failed to read key file: ${e.message}")
                 }
             }
         }

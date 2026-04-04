@@ -1,5 +1,8 @@
 package com.felix.occlient.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -7,21 +10,27 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.felix.occlient.network.SshManagerHolder
 import com.felix.occlient.ui.theme.TerminalGreen
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LogScreen(onNavigateBack: () -> Unit) {
     val logs by SshManagerHolder.sshManager.logs.collectAsState()
     val listState = rememberLazyListState()
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(logs.size) {
         if (logs.isNotEmpty()) listState.animateScrollToItem(logs.size - 1)
@@ -37,13 +46,24 @@ fun LogScreen(onNavigateBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    IconButton(onClick = {
+                        val logText = logs.joinToString("\n")
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("SSH Logs", logText))
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("Logs copied to clipboard")
+                        }
+                    }) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy logs to clipboard")
+                    }
                     IconButton(onClick = { SshManagerHolder.sshManager.clearLogs() }) {
                         Icon(Icons.Default.DeleteSweep, contentDescription = "Clear logs")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Box(
             modifier = Modifier
