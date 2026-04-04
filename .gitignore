@@ -8,13 +8,12 @@
 .externalNativeBuild
 .cxx
 local.properties
-*.jks
-*.keystore
 
 # Gradle
 .gradle/
 build/
 !gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
 
 # IDE
 .idea/
@@ -22,3 +21,6 @@ build/
 
 # Generated
 app/build/
+
+# Keep keystore in repo for consistent debug builds
+# keystore/release.jks is intentionally committed
