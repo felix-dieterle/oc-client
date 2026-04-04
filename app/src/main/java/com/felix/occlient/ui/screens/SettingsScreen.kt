@@ -101,7 +101,7 @@ fun SettingsScreen(
                 placeholder = { Text("-----BEGIN RSA PRIVATE KEY-----\n...") },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 240.dp),
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
                 maxLines = 10
             )
 

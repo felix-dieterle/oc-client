@@ -38,6 +38,11 @@ class ChatViewModel(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    companion object {
+        /** Delay before sending the opencode command, allowing the SSH shell to fully initialise. */
+        private const val OPENCODE_STARTUP_DELAY_MS = 1000L
+    }
+
     private var isFirstConnect = true
 
     init {
@@ -71,7 +76,7 @@ class ChatViewModel(
                 addMessage("Connected! Starting opencode...", MessageType.SYSTEM)
                 if (isFirstConnect) {
                     isFirstConnect = false
-                    kotlinx.coroutines.delay(1000)
+                    kotlinx.coroutines.delay(OPENCODE_STARTUP_DELAY_MS)
                     sshManager.sendCommand("opencode")
                 }
             } else {

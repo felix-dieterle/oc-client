@@ -24,6 +24,11 @@ data class SshConfig(
 )
 
 class SshManager {
+    companion object {
+        /** Interval between polls when no SSH data is available, in milliseconds. */
+        private const val SSH_READ_POLL_INTERVAL_MS = 50L
+    }
+
     private val _connectionState = MutableStateFlow(SshConnectionState.DISCONNECTED)
     val connectionState: StateFlow<SshConnectionState> = _connectionState
 
@@ -106,7 +111,7 @@ class SshManager {
                         }
                     } else {
                         if (shellChannel?.isClosed == true) break
-                        delay(50)
+                        delay(SSH_READ_POLL_INTERVAL_MS)
                     }
                 }
             } catch (e: Exception) {
