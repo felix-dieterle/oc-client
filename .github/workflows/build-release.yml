@@ -7,6 +7,10 @@ on:
       - main
   workflow_dispatch:
 
+# Minimum permissions: contents write to create releases, nothing else needed
+permissions:
+  contents: write
+
 jobs:
   build:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
@@ -32,6 +36,9 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build debug APK
+        # Keystore is committed in keystore/release.jks.
+        # Set KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD as repository secrets,
+        # or use the documented defaults from keystore/README.md for public forks.
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || 'occlient123' }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'oc-client' }}

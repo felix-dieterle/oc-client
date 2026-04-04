@@ -20,6 +20,9 @@ android {
     signingConfigs {
         create("release") {
             storeFile = rootProject.file("keystore/release.jks")
+            // Passwords are read from environment variables set in CI.
+            // For local builds, set KEYSTORE_PASSWORD, KEY_ALIAS, and KEY_PASSWORD
+            // environment variables, or the values from keystore/README.md.
             storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "occlient123"
             keyAlias = System.getenv("KEY_ALIAS") ?: "oc-client"
             keyPassword = System.getenv("KEY_PASSWORD") ?: "occlient123"
