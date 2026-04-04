@@ -39,7 +39,6 @@ class ChatViewModel(
     val error: StateFlow<String?> = _error.asStateFlow()
 
     private var isFirstConnect = true
-    private val outputBuffer = StringBuilder()
 
     init {
         viewModelScope.launch {
