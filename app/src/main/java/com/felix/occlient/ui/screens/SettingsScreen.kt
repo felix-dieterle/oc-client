@@ -1,20 +1,27 @@
 package com.felix.occlient.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.felix.occlient.viewmodel.SettingsViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -30,6 +37,27 @@ fun SettingsScreen(
     var privateKey by remember(settings.privateKey) { mutableStateOf(settings.privateKey) }
     var showKey by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    val keyFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let {
+            coroutineScope.launch {
+                try {
+                    val content = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)?.use { stream ->
+                            stream.bufferedReader().readText()
+                        }.orEmpty()
+                    }
+                    privateKey = content
+                } catch (e: Exception) {
+                    snackbarHostState.showSnackbar("Failed to read key file")
+                }
+            }
+        }
+    }
 
     LaunchedEffect(saved) {
         if (saved) {
@@ -108,6 +136,11 @@ fun SettingsScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = { showKey = !showKey }) {
                     Text(if (showKey) "Hide Key" else "Show Key")
+                }
+                OutlinedButton(onClick = { keyFileLauncher.launch(arrayOf("text/plain", "application/x-pem-file", "application/octet-stream")) }) {
+                    Icon(Icons.Default.FolderOpen, contentDescription = "Select SSH key file", modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Select File")
                 }
             }
 
