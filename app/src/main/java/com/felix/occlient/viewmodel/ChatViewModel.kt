@@ -98,7 +98,6 @@ class ChatViewModel(
     }
 
     private fun processOutput(text: String) {
-        outputBuffer.append(text)
         val cleaned = text
             .replace(Regex("\u001B\\[[;\\d]*[A-Za-z]"), "")
             .replace(Regex("\u001B\\][^\u0007]*\u0007"), "")

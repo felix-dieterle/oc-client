@@ -55,6 +55,8 @@ class SshManager {
                 appendLog("Using private key authentication")
             }
             val session = jsch.getSession(config.username, config.host, config.port)
+            // Note: host key verification is disabled for simplicity since users connect to their own servers.
+            // For production use, implement known-hosts verification to prevent MITM attacks.
             session.setConfig("StrictHostKeyChecking", "no")
             session.setConfig("PreferredAuthentications", if (config.privateKey.isNotBlank()) "publickey" else "password")
             if (config.password.isNotBlank()) {
