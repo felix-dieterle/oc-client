@@ -34,8 +34,10 @@ fun SettingsScreen(
     var host by remember(settings.host) { mutableStateOf(settings.host) }
     var port by remember(settings.port) { mutableStateOf(settings.port.toString()) }
     var username by remember(settings.username) { mutableStateOf(settings.username) }
+    var password by remember(settings.password) { mutableStateOf(settings.password) }
     var privateKey by remember(settings.privateKey) { mutableStateOf(settings.privateKey) }
     var showKey by remember { mutableStateOf(false) }
+    var showPassword by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -123,6 +125,22 @@ fun SettingsScreen(
             Text("Authentication", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
 
             OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("Password") },
+                placeholder = { Text("SSH password or key passphrase") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = {
+                    TextButton(onClick = { showPassword = !showPassword }) {
+                        Text(if (showPassword) "Hide" else "Show")
+                    }
+                }
+            )
+
+            OutlinedTextField(
                 value = privateKey,
                 onValueChange = { privateKey = it },
                 label = { Text("Private Key (PEM)") },
@@ -150,6 +168,7 @@ fun SettingsScreen(
                         host = host.trim(),
                         port = port.toIntOrNull() ?: 22,
                         username = username.trim(),
+                        password = password,
                         privateKey = privateKey.trim()
                     )
                 },
