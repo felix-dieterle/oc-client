@@ -13,6 +13,7 @@ data class SshSettings(
     val host: String = "",
     val port: Int = 22,
     val username: String = "",
+    val password: String = "",
     val privateKey: String = ""
 )
 
@@ -21,6 +22,7 @@ class SettingsDataStore(private val context: Context) {
         val SSH_HOST = stringPreferencesKey("ssh_host")
         val SSH_PORT = intPreferencesKey("ssh_port")
         val SSH_USER = stringPreferencesKey("ssh_user")
+        val SSH_PASSWORD = stringPreferencesKey("ssh_password")
         val SSH_PRIVATE_KEY = stringPreferencesKey("ssh_private_key")
     }
 
@@ -29,6 +31,7 @@ class SettingsDataStore(private val context: Context) {
             host = prefs[Keys.SSH_HOST] ?: "",
             port = prefs[Keys.SSH_PORT] ?: 22,
             username = prefs[Keys.SSH_USER] ?: "",
+            password = prefs[Keys.SSH_PASSWORD] ?: "",
             privateKey = prefs[Keys.SSH_PRIVATE_KEY] ?: ""
         )
     }
@@ -38,6 +41,7 @@ class SettingsDataStore(private val context: Context) {
             prefs[Keys.SSH_HOST] = settings.host
             prefs[Keys.SSH_PORT] = settings.port
             prefs[Keys.SSH_USER] = settings.username
+            prefs[Keys.SSH_PASSWORD] = settings.password
             prefs[Keys.SSH_PRIVATE_KEY] = settings.privateKey
         }
     }

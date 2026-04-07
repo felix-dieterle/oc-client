@@ -69,6 +69,7 @@ class ChatViewModel(
                 host = settings.host,
                 port = settings.port,
                 username = settings.username,
+                password = settings.password,
                 privateKey = settings.privateKey
             )
             val result = sshManager.connect(config)

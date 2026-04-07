@@ -56,15 +56,20 @@ class SshManager {
             val jsch = JSch()
             if (config.privateKey.isNotBlank()) {
                 val keyBytes = config.privateKey.trimIndent().toByteArray(Charsets.UTF_8)
-                jsch.addIdentity("key", keyBytes, null, null)
+                val passphrase = if (config.password.isNotBlank()) config.password.toByteArray(Charsets.UTF_8) else null
+                jsch.addIdentity("key", keyBytes, null, passphrase)
                 appendLog("Using private key authentication")
             }
             val session = jsch.getSession(config.username, config.host, config.port)
             // Note: host key verification is disabled for simplicity since users connect to their own servers.
             // For production use, implement known-hosts verification to prevent MITM attacks.
             session.setConfig("StrictHostKeyChecking", "no")
-            session.setConfig("PreferredAuthentications", if (config.privateKey.isNotBlank()) "publickey" else "password")
-            if (config.password.isNotBlank()) {
+            val preferredAuths = when {
+                config.privateKey.isNotBlank() -> "publickey,keyboard-interactive,password"
+                else -> "keyboard-interactive,password"
+            }
+            session.setConfig("PreferredAuthentications", preferredAuths)
+            if (config.password.isNotBlank() && config.privateKey.isBlank()) {
                 session.setPassword(config.password)
             }
             session.connect(15000)
