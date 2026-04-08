@@ -73,6 +73,8 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.jsch)
+    implementation(libs.bouncycastle.provider)
+    implementation(libs.bouncycastle.pkix)
     implementation(libs.kotlinx.coroutines.android)
     debugImplementation(libs.androidx.ui.tooling)
 }
