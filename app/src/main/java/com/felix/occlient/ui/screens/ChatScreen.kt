@@ -7,8 +7,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.*
@@ -75,7 +75,7 @@ fun ChatScreen(
                 },
                 actions = {
                     IconButton(onClick = onNavigateToLog) {
-                        Icon(Icons.Default.Assignment, contentDescription = "Logs")
+                        Icon(Icons.AutoMirrored.Filled.Assignment, contentDescription = "Logs")
                     }
                     if (connectionState == SshConnectionState.CONNECTED) {
                         IconButton(onClick = { viewModel.disconnect() }) {
