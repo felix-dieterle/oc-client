@@ -52,24 +52,37 @@ class SshManager {
     suspend fun connect(config: SshConfig): Result<Unit> = withContext(Dispatchers.IO) {
         _connectionState.value = SshConnectionState.CONNECTING
         appendLog("Connecting to ${config.host}:${config.port} as ${config.username}...")
+        val usingKey = config.privateKey.isNotBlank()
         try {
             val jsch = JSch()
-            if (config.privateKey.isNotBlank()) {
-                val keyBytes = config.privateKey.trimIndent().toByteArray(Charsets.UTF_8)
+            JSch.setLogger(object : com.jcraft.jsch.Logger {
+                override fun isEnabled(level: Int) = level >= com.jcraft.jsch.Logger.INFO
+                override fun log(level: Int, message: String) {
+                    appendLog("[SSH] $message")
+                }
+            })
+            if (usingKey) {
+                val keyHeader = config.privateKey.trim().lines().firstOrNull() ?: ""
+                val keyType = Regex("-----BEGIN (.+?) PRIVATE KEY-----").find(keyHeader)
+                    ?.groupValues?.getOrNull(1) // groupValues[0] is full match, [1] is the captured key type
+                    ?: "UNKNOWN"
                 val passphrase = if (config.password.isNotBlank()) config.password.toByteArray(Charsets.UTF_8) else null
-                jsch.addIdentity("key", keyBytes, null, passphrase)
                 appendLog("Using private key authentication")
+                appendLog("Key type: $keyType, passphrase provided: ${passphrase != null}")
+                val keyBytes = config.privateKey.trimIndent().toByteArray(Charsets.UTF_8)
+                jsch.addIdentity("key", keyBytes, null, passphrase)
             }
             val session = jsch.getSession(config.username, config.host, config.port)
             // Note: host key verification is disabled for simplicity since users connect to their own servers.
             // For production use, implement known-hosts verification to prevent MITM attacks.
             session.setConfig("StrictHostKeyChecking", "no")
             val preferredAuths = when {
-                config.privateKey.isNotBlank() -> "publickey,keyboard-interactive,password"
+                usingKey -> "publickey,keyboard-interactive,password"
                 else -> "keyboard-interactive,password"
             }
             session.setConfig("PreferredAuthentications", preferredAuths)
-            if (config.password.isNotBlank() && config.privateKey.isBlank()) {
+            appendLog("Preferred auth methods: $preferredAuths")
+            if (config.password.isNotBlank() && !usingKey) {
                 session.setPassword(config.password)
             }
             session.connect(15000)
@@ -90,6 +103,10 @@ class SshManager {
         } catch (e: JSchException) {
             val msg = "SSH connection failed: ${e.message}"
             appendLog(msg)
+            if (usingKey && e.message?.contains("Auth fail", ignoreCase = true) == true) {
+                appendLog("Auth failure detail: private key authentication was rejected by the server")
+                appendLog("Hint: ensure the public key is in ~/.ssh/authorized_keys on the server and the key format is supported (RSA/ED25519/ECDSA)")
+            }
             _connectionState.value = SshConnectionState.ERROR
             Result.failure(Exception(msg, e))
         } catch (e: Exception) {

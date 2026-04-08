@@ -7,21 +7,28 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.felix.occlient.network.SshManagerHolder
 import com.felix.occlient.ui.theme.TerminalGreen
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LogScreen(onNavigateBack: () -> Unit) {
     val logs by SshManagerHolder.sshManager.logs.collectAsState()
     val listState = rememberLazyListState()
+    val clipboardManager = LocalClipboardManager.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(logs.size) {
         if (logs.isNotEmpty()) listState.animateScrollToItem(logs.size - 1)
@@ -37,13 +44,22 @@ fun LogScreen(onNavigateBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(logs.joinToString("\n")))
+                            scope.launch { snackbarHostState.showSnackbar("Logs copied to clipboard") }
+                        }
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy logs to clipboard")
+                    }
                     IconButton(onClick = { SshManagerHolder.sshManager.clearLogs() }) {
                         Icon(Icons.Default.DeleteSweep, contentDescription = "Clear logs")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Box(
             modifier = Modifier
