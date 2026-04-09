@@ -137,17 +137,47 @@ fun ChatScreen(
 
 @Composable
 fun ChatMessageItem(message: ChatMessage) {
-    val bgColor = when (message.type) {
-        MessageType.USER -> MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-        MessageType.SYSTEM -> MaterialTheme.colorScheme.surfaceVariant
-        MessageType.ERROR -> MaterialTheme.colorScheme.errorContainer
+    when (message.type) {
+        MessageType.SYSTEM -> SystemMessageLabel(message.content)
+        MessageType.USER, MessageType.ASSISTANT, MessageType.ERROR -> ChatBubble(message)
     }
-    val textColor = when (message.type) {
-        MessageType.USER -> MaterialTheme.colorScheme.primary
-        MessageType.SYSTEM -> MaterialTheme.colorScheme.onSurfaceVariant
-        MessageType.ERROR -> MaterialTheme.colorScheme.onErrorContainer
+}
+
+/**
+ * Small centred pill-style label for connection-status / informational messages
+ * (e.g. "Connecting…", "Connected! Starting opencode…", "Disconnected").
+ */
+@Composable
+private fun SystemMessageLabel(content: String) {
+    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Text(
+            text = content,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .background(
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    MaterialTheme.shapes.small
+                )
+                .padding(horizontal = 10.dp, vertical = 4.dp)
+        )
     }
-    val alignment = if (message.type == MessageType.USER) Alignment.End else Alignment.Start
+}
+
+/**
+ * Bubble-style message for USER prompts, ASSISTANT (opencode) responses, and ERROR messages.
+ */
+@Composable
+private fun ChatBubble(message: ChatMessage) {
+    val isUser = message.type == MessageType.USER
+    val isError = message.type == MessageType.ERROR
+    // Single when expression that yields both colors together, eliminating duplicate maintenance.
+    val (bgColor, textColor) = when {
+        isUser -> TerminalGreen to MaterialTheme.colorScheme.surface  // dark text on bright green
+        isError -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant to MaterialTheme.colorScheme.onSurfaceVariant  // ASSISTANT
+    }
+    val alignment = if (isUser) Alignment.End else Alignment.Start
 
     Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = alignment) {
         Box(
@@ -159,7 +189,7 @@ fun ChatMessageItem(message: ChatMessage) {
             Text(
                 text = message.content,
                 color = textColor,
-                fontFamily = if (message.type == MessageType.SYSTEM) FontFamily.Monospace else FontFamily.Default,
+                fontFamily = if (message.type == MessageType.ASSISTANT) FontFamily.Monospace else FontFamily.Default,
                 style = MaterialTheme.typography.bodySmall
             )
         }
