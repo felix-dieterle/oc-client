@@ -45,7 +45,7 @@ class ChatViewModel(
     val error: StateFlow<String?> = _error.asStateFlow()
 
     companion object {
-        /** Delay before sending the opencode command, allowing the SSH shell to fully initialise. */
+        /** Delay before sending the opencode-cli command, allowing the SSH shell to fully initialise. */
         private const val OPENCODE_STARTUP_DELAY_MS = 1000L
 
         // Windows cmd/PowerShell: optional "PS " prefix, optional "user@host " prefix, then drive:\path>
@@ -98,13 +98,13 @@ class ChatViewModel(
             )
             val result = sshManager.connect(config)
             if (result.isSuccess) {
-                addMessage("Connected! Starting opencode...", MessageType.SYSTEM)
+                addMessage("Connected! Starting opencode-cli...", MessageType.SYSTEM)
                 if (isFirstConnect) {
                     isFirstConnect = false
                     kotlinx.coroutines.delay(OPENCODE_STARTUP_DELAY_MS)
                     // Track the startup command so its terminal echo is suppressed.
-                    pendingEchoCommands.merge("opencode", 1, Int::plus)
-                    sshManager.sendCommand("opencode")
+                    pendingEchoCommands.merge("opencode-cli", 1, Int::plus)
+                    sshManager.sendCommand("opencode-cli")
                 }
             } else {
                 addMessage("Connection failed: ${result.exceptionOrNull()?.message}", MessageType.ERROR)
