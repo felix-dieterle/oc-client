@@ -12,10 +12,10 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 /**
- * USER    – message sent by the user (right-aligned green bubble).
- * ASSISTANT – response from opencode AI (left-aligned, distinct colour).
- * SYSTEM  – connection status / informational messages (left-aligned, muted).
- * ERROR   – error messages (left-aligned, error colour).
+ * USER      – message sent by the user (right-aligned green bubble).
+ * ASSISTANT – response from opencode AI (left-aligned, distinct color).
+ * SYSTEM    – connection status / informational messages (left-aligned, muted).
+ * ERROR     – error messages (left-aligned, error color).
  */
 enum class MessageType { USER, ASSISTANT, SYSTEM, ERROR }
 
