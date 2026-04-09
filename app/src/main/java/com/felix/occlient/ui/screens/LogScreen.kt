@@ -30,8 +30,24 @@ fun LogScreen(onNavigateBack: () -> Unit) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(logs.size) {
-        if (logs.isNotEmpty()) listState.animateScrollToItem(logs.size - 1)
+    // Strip ANSI/VT100 escape sequences for display so the log is human-readable.
+    // The clipboard action still copies the raw bytes for debugging.
+    val displayLines = remember(logs) {
+        val ansiCsi = Regex("\u001B\\[[\u0020-\u003F]*[\u0040-\u007E]")
+        val ansiOsc = Regex("\u001B\\][^\u0007]*\u0007")
+        val ansiOther = Regex("\u001B[^\\[\\]]")
+        logs.flatMap { entry ->
+            entry
+                .replace(ansiCsi, "")
+                .replace(ansiOsc, "")
+                .replace(ansiOther, "")
+                .replace("\r", "")
+                .lines()
+        }.filter { it.isNotBlank() }
+    }
+
+    LaunchedEffect(displayLines.size) {
+        if (displayLines.isNotEmpty()) listState.animateScrollToItem(displayLines.size - 1)
     }
 
     Scaffold(
@@ -67,7 +83,7 @@ fun LogScreen(onNavigateBack: () -> Unit) {
                 .padding(padding)
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            if (logs.isEmpty()) {
+            if (displayLines.isEmpty()) {
                 Text(
                     "No logs yet",
                     modifier = Modifier.padding(16.dp),
@@ -80,7 +96,7 @@ fun LogScreen(onNavigateBack: () -> Unit) {
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(8.dp)
                 ) {
-                    items(logs.flatMap { it.lines() }.filter { it.isNotBlank() }) { line ->
+                    items(displayLines) { line ->
                         Text(
                             text = line,
                             fontFamily = FontFamily.Monospace,

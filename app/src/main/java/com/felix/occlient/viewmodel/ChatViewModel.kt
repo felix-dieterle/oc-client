@@ -10,6 +10,7 @@ import com.felix.occlient.network.SshManagerHolder
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * USER      – message sent by the user (right-aligned green bubble).
@@ -69,6 +70,13 @@ class ChatViewModel(
 
     private var isFirstConnect = true
 
+    /**
+     * Set to true just before sending `opencode-cli` so that the first batch of raw SSH output
+     * received afterwards (typically opencode's TUI drawing sequences) triggers a SYSTEM
+     * acknowledgement message instead of silently disappearing.  Cleared atomically on first use.
+     */
+    private val awaitingOpenCodeAck = AtomicBoolean(false)
+
     init {
         viewModelScope.launch {
             sessionRepository.getSessionById(sessionId)?.let {
@@ -104,6 +112,9 @@ class ChatViewModel(
                     kotlinx.coroutines.delay(OPENCODE_STARTUP_DELAY_MS)
                     // Track the startup command so its terminal echo is suppressed.
                     pendingEchoCommands.merge("opencode-cli", 1, Int::plus)
+                    // Arm the acknowledgement flag before writing to the stream so that the
+                    // very first incoming bytes (opencode's TUI drawing sequences) are noticed.
+                    awaitingOpenCodeAck.set(true)
                     sshManager.sendCommand("opencode-cli")
                 }
             } else {
@@ -133,15 +144,26 @@ class ChatViewModel(
 
     /**
      * Processes raw SSH output:
-     * 1. Strips ANSI escape sequences and carriage returns.
+     * 1. Strips ANSI/VT100 escape sequences and carriage returns.
      * 2. Filters terminal echoes of commands we sent (the PTY echoes typed input).
      * 3. Filters lines that are solely a shell prompt (noise with no AI content).
      * 4. Classifies remaining lines as ASSISTANT responses.
+     * 5. If this is the first batch of output after launching opencode-cli and everything was
+     *    filtered (i.e. the TUI startup drawing was silently discarded), emits a SYSTEM
+     *    acknowledgement so the user knows opencode is actually running.
      */
     private fun processOutput(text: String) {
+        // Capture and clear the ack flag atomically so exactly one message is shown.
+        val isFirstAck = awaitingOpenCodeAck.getAndSet(false)
+
         val withoutAnsi = text
-            .replace(Regex("\u001B\\[[;\\d]*[A-Za-z]"), "")
+            // CSI sequences: ESC [ <param bytes 0x20-0x3F>* <intermediate bytes 0x20-0x2F>* <final byte 0x40-0x7E>
+            // This covers standard sequences AND DEC private modes (e.g. \x1b[?1049h, \x1b[?25l).
+            .replace(Regex("\u001B\\[[\u0020-\u003F]*[\u0040-\u007E]"), "")
+            // OSC sequences: ESC ] ... BEL
             .replace(Regex("\u001B\\][^\u0007]*\u0007"), "")
+            // All remaining 2-char escape sequences (e.g. ESC= ESC> ESC7 ESC( etc.)
+            .replace(Regex("\u001B[^\\[\\]]"), "")
             .replace(Regex("\r"), "")
 
         val filteredLines = withoutAnsi.split("\n").filter { rawLine ->
@@ -173,6 +195,12 @@ class ChatViewModel(
         if (result.isNotBlank()) {
             viewModelScope.launch {
                 addMessage(result, MessageType.ASSISTANT)
+            }
+        } else if (isFirstAck) {
+            // Raw output arrived (opencode's TUI drawing sequences) but everything was
+            // filtered.  Show a SYSTEM message so the user knows opencode is alive.
+            viewModelScope.launch {
+                addMessage("opencode is running. Type your prompt below.", MessageType.SYSTEM)
             }
         }
     }
