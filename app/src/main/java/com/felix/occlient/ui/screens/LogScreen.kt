@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.felix.occlient.network.SshManagerHolder
 import com.felix.occlient.ui.theme.TerminalGreen
+import com.felix.occlient.util.AnsiUtils
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -33,16 +34,8 @@ fun LogScreen(onNavigateBack: () -> Unit) {
     // Strip ANSI/VT100 escape sequences for display so the log is human-readable.
     // The clipboard action still copies the raw bytes for debugging.
     val displayLines = remember(logs) {
-        val ansiCsi = Regex("\u001B\\[[\u0020-\u003F]*[\u0040-\u007E]")
-        val ansiOsc = Regex("\u001B\\][^\u0007]*\u0007")
-        val ansiOther = Regex("\u001B[^\\[\\]]")
         logs.flatMap { entry ->
-            entry
-                .replace(ansiCsi, "")
-                .replace(ansiOsc, "")
-                .replace(ansiOther, "")
-                .replace("\r", "")
-                .lines()
+            AnsiUtils.strip(entry).lines()
         }.filter { it.isNotBlank() }
     }
 

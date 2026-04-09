@@ -7,6 +7,7 @@ import com.felix.occlient.data.repository.SessionRepository
 import com.felix.occlient.network.SshConfig
 import com.felix.occlient.network.SshConnectionState
 import com.felix.occlient.network.SshManagerHolder
+import com.felix.occlient.util.AnsiUtils
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -156,15 +157,7 @@ class ChatViewModel(
         // Capture and clear the ack flag atomically so exactly one message is shown.
         val isFirstAck = awaitingOpenCodeAck.getAndSet(false)
 
-        val withoutAnsi = text
-            // CSI sequences: ESC [ <param bytes 0x20-0x3F>* <intermediate bytes 0x20-0x2F>* <final byte 0x40-0x7E>
-            // This covers standard sequences AND DEC private modes (e.g. \x1b[?1049h, \x1b[?25l).
-            .replace(Regex("\u001B\\[[\u0020-\u003F]*[\u0040-\u007E]"), "")
-            // OSC sequences: ESC ] ... BEL
-            .replace(Regex("\u001B\\][^\u0007]*\u0007"), "")
-            // All remaining 2-char escape sequences (e.g. ESC= ESC> ESC7 ESC( etc.)
-            .replace(Regex("\u001B[^\\[\\]]"), "")
-            .replace(Regex("\r"), "")
+        val withoutAnsi = AnsiUtils.strip(text)
 
         val filteredLines = withoutAnsi.split("\n").filter { rawLine ->
             val line = rawLine.trim()
