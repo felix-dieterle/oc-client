@@ -169,19 +169,20 @@ private fun SystemMessageLabel(content: String) {
  */
 @Composable
 private fun ChatBubble(message: ChatMessage) {
-    val bgColor = when (message.type) {
-        MessageType.USER -> TerminalGreen
-        MessageType.ASSISTANT -> MaterialTheme.colorScheme.surfaceVariant
-        MessageType.ERROR -> MaterialTheme.colorScheme.errorContainer
-        MessageType.SYSTEM -> MaterialTheme.colorScheme.surfaceVariant
+    val isUser = message.type == MessageType.USER
+    val isError = message.type == MessageType.ERROR
+    // Boolean-condition when avoids exhaustiveness issues with unreachable enum branches.
+    val bgColor = when {
+        isUser -> TerminalGreen
+        isError -> MaterialTheme.colorScheme.errorContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant  // ASSISTANT
     }
-    val textColor = when (message.type) {
-        MessageType.USER -> MaterialTheme.colorScheme.surface  // dark text on bright TerminalGreen
-        MessageType.ASSISTANT -> MaterialTheme.colorScheme.onSurfaceVariant
-        MessageType.ERROR -> MaterialTheme.colorScheme.onErrorContainer
-        MessageType.SYSTEM -> MaterialTheme.colorScheme.onSurfaceVariant
+    val textColor = when {
+        isUser -> MaterialTheme.colorScheme.surface  // dark text on bright TerminalGreen
+        isError -> MaterialTheme.colorScheme.onErrorContainer
+        else -> MaterialTheme.colorScheme.onSurfaceVariant  // ASSISTANT
     }
-    val alignment = if (message.type == MessageType.USER) Alignment.End else Alignment.Start
+    val alignment = if (isUser) Alignment.End else Alignment.Start
 
     Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = alignment) {
         Box(

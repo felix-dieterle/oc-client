@@ -49,12 +49,13 @@ class ChatViewModel(
         private const val OPENCODE_STARTUP_DELAY_MS = 1000L
 
         // Windows cmd/PowerShell: optional "PS " prefix, optional "user@host " prefix, then drive:\path>
-        private val WINDOWS_SHELL_PROMPT_REGEX = Regex(
-            """^(?:PS )?(?:[A-Za-z0-9_.\\-]+@[A-Za-z0-9_.\\-]+ )?[A-Za-z]:\\[^\n]*>\s*$"""
+        private val windowsShellPromptRegex = Regex(
+            """^(?:PS )?(?:[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+ )?[A-Za-z]:\\[^\n]*>\s*$"""
         )
         // Linux/macOS bash/zsh: user@host:/path$ or user@host:/path#
-        private val UNIX_SHELL_PROMPT_REGEX = Regex(
-            """^[A-Za-z0-9_.\\-]+@[A-Za-z0-9_.\\-]+:[^\n]*[#$]\s*$"""
+        // Note: ${'$'} is used instead of a bare $ to prevent Kotlin string interpolation.
+        private val unixShellPromptRegex = Regex(
+            """^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:[^\n]*[#${'$'}]\s*$"""
         )
     }
 
@@ -148,16 +149,12 @@ class ChatViewModel(
             if (line.isEmpty()) return@filter false
 
             // Check whether this line is the terminal echo of a sent command.
-            // The echo may appear as the plain command (O(1) lookup) or as
+            // The echo may appear as the plain command (O(1) exact-match lookup) or as
             // shell-prompt + command (O(n) where n = distinct pending commands, typically ≤3).
             val echoedCmd: String? = pendingEchoCommands[line]
                 ?.let { line }
-                ?: pendingEchoCommands.keys().asSequence().firstOrNull { cmd ->
-                    // Windows: shell prompt ends with ">" before the echoed command
-                    line.endsWith(">$cmd") || line.endsWith("> $cmd") ||
-                    // Unix bash/zsh: shell prompt ends with "$" or "#" before the echoed command
-                    line.endsWith("\$$cmd") || line.endsWith("\$ $cmd") ||
-                    line.endsWith("#$cmd") || line.endsWith("# $cmd")
+                ?: pendingEchoCommands.keys.asSequence().firstOrNull { cmd ->
+                    matchesShellPromptEcho(line, cmd)
                 }
             if (echoedCmd != null) {
                 pendingEchoCommands.compute(echoedCmd) { _, count ->
@@ -181,7 +178,18 @@ class ChatViewModel(
     }
 
     private fun isShellPromptLine(line: String): Boolean =
-        WINDOWS_SHELL_PROMPT_REGEX.matches(line) || UNIX_SHELL_PROMPT_REGEX.matches(line)
+        windowsShellPromptRegex.matches(line) || unixShellPromptRegex.matches(line)
+
+    /**
+     * Returns true when [line] is a shell-prompt-prefixed echo of [cmd]
+     * (e.g. `user@host C:\path>cmd` on Windows or `user@host:~/path$ cmd` on Unix).
+     */
+    private fun matchesShellPromptEcho(line: String, cmd: String): Boolean =
+        // Windows cmd/PowerShell: prompt ends with ">"
+        line.endsWith(">$cmd") || line.endsWith("> $cmd") ||
+        // Unix bash/zsh: prompt ends with "$" or "#"
+        line.endsWith("\$$cmd") || line.endsWith("\$ $cmd") ||
+        line.endsWith("#$cmd") || line.endsWith("# $cmd")
 
     private fun addMessage(content: String, type: MessageType) {
         _messages.value = _messages.value + ChatMessage(content = content, type = type)
