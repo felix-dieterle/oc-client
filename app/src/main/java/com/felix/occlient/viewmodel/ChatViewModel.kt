@@ -10,7 +10,6 @@ import com.felix.occlient.network.SshManagerHolder
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
-import java.util.concurrent.ConcurrentLinkedDeque
 
 /**
  * USER    – message sent by the user (right-aligned green bubble).
@@ -49,21 +48,23 @@ class ChatViewModel(
         /** Delay before sending the opencode command, allowing the SSH shell to fully initialise. */
         private const val OPENCODE_STARTUP_DELAY_MS = 1000L
 
-        // Shell prompt patterns:
-        // Windows cmd:  "C:\path>"  or  "user@host C:\path>"
-        // PowerShell:   "PS C:\path>"
-        // Linux bash/zsh: "user@host:~/path$" or "user@host:~/path#"
-        private val SHELL_PROMPT_REGEX = Regex(
-            """^(?:PS )?(?:[A-Za-z0-9 _.\\-]+@[A-Za-z0-9_.\\-]+ )?[A-Za-z]:\\[^\n]*>\s*$""" +
-            """|^[A-Za-z0-9_.\\-]+@[A-Za-z0-9_.\\-]+:[^\n]*[#$]\s*$"""
+        // Windows cmd/PowerShell: optional "PS " prefix, optional "user@host " prefix, then drive:\path>
+        private val WINDOWS_SHELL_PROMPT_REGEX = Regex(
+            """^(?:PS )?(?:[A-Za-z0-9_.\\-]+@[A-Za-z0-9_.\\-]+ )?[A-Za-z]:\\[^\n]*>\s*$"""
+        )
+        // Linux/macOS bash/zsh: user@host:/path$ or user@host:/path#
+        private val UNIX_SHELL_PROMPT_REGEX = Regex(
+            """^[A-Za-z0-9_.\\-]+@[A-Za-z0-9_.\\-]+:[^\n]*[#$]\s*$"""
         )
     }
 
     /**
-     * Thread-safe queue tracking commands that were written to the SSH stream and whose
-     * terminal echo should be suppressed from the chat view.
+     * Thread-safe map tracking commands sent to the SSH stream whose terminal echoes should be
+     * suppressed.  Values are counts to correctly handle the same command sent multiple times
+     * in quick succession.  O(1) exact-match lookup; only falls back to O(n) iteration when
+     * checking for shell-prompt-prefixed echo lines.
      */
-    private val pendingEchoCommands = ConcurrentLinkedDeque<String>()
+    private val pendingEchoCommands = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
     private var isFirstConnect = true
 
@@ -101,7 +102,7 @@ class ChatViewModel(
                     isFirstConnect = false
                     kotlinx.coroutines.delay(OPENCODE_STARTUP_DELAY_MS)
                     // Track the startup command so its terminal echo is suppressed.
-                    pendingEchoCommands.addLast("opencode")
+                    pendingEchoCommands.merge("opencode", 1, Int::plus)
                     sshManager.sendCommand("opencode")
                 }
             } else {
@@ -119,7 +120,7 @@ class ChatViewModel(
         viewModelScope.launch {
             addMessage(text, MessageType.USER)
             // Track the prompt so its terminal echo is suppressed in processOutput.
-            pendingEchoCommands.addLast(text.trim())
+            pendingEchoCommands.merge(text.trim(), 1, Int::plus)
             val result = sshManager.sendCommand(text)
             if (result.isFailure) {
                 addMessage("Failed to send: ${result.exceptionOrNull()?.message}", MessageType.ERROR)
@@ -147,17 +148,26 @@ class ChatViewModel(
             if (line.isEmpty()) return@filter false
 
             // Check whether this line is the terminal echo of a sent command.
-            // The echo may appear as either the plain command or shell-prompt + command.
-            val echoMatch = pendingEchoCommands.firstOrNull { cmd ->
-                line == cmd || line.endsWith(">$cmd") || line.endsWith("> $cmd")
-            }
-            if (echoMatch != null) {
-                pendingEchoCommands.remove(echoMatch)
+            // The echo may appear as the plain command (O(1) lookup) or as
+            // shell-prompt + command (O(n) where n = distinct pending commands, typically ≤3).
+            val echoedCmd: String? = pendingEchoCommands[line]
+                ?.let { line }
+                ?: pendingEchoCommands.keys().asSequence().firstOrNull { cmd ->
+                    // Windows: shell prompt ends with ">" before the echoed command
+                    line.endsWith(">$cmd") || line.endsWith("> $cmd") ||
+                    // Unix bash/zsh: shell prompt ends with "$" or "#" before the echoed command
+                    line.endsWith("\$$cmd") || line.endsWith("\$ $cmd") ||
+                    line.endsWith("#$cmd") || line.endsWith("# $cmd")
+                }
+            if (echoedCmd != null) {
+                pendingEchoCommands.compute(echoedCmd) { _, count ->
+                    if (count == null || count <= 1) null else count - 1
+                }
                 return@filter false
             }
 
             // Suppress lines that are purely a shell prompt (no AI content).
-            if (SHELL_PROMPT_REGEX.matches(line)) return@filter false
+            if (isShellPromptLine(line)) return@filter false
 
             true
         }
@@ -169,6 +179,9 @@ class ChatViewModel(
             }
         }
     }
+
+    private fun isShellPromptLine(line: String): Boolean =
+        WINDOWS_SHELL_PROMPT_REGEX.matches(line) || UNIX_SHELL_PROMPT_REGEX.matches(line)
 
     private fun addMessage(content: String, type: MessageType) {
         _messages.value = _messages.value + ChatMessage(content = content, type = type)

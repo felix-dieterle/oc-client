@@ -137,38 +137,51 @@ fun ChatScreen(
 
 @Composable
 fun ChatMessageItem(message: ChatMessage) {
-    // SYSTEM messages (connection status, info) are rendered as small centred labels.
-    if (message.type == MessageType.SYSTEM) {
-        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Text(
-                text = message.content,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .background(
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                        MaterialTheme.shapes.small
-                    )
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
-            )
-        }
-        return
+    when (message.type) {
+        MessageType.SYSTEM -> SystemMessageLabel(message.content)
+        MessageType.USER, MessageType.ASSISTANT, MessageType.ERROR -> ChatBubble(message)
     }
+}
 
+/**
+ * Small centred pill-style label for connection-status / informational messages
+ * (e.g. "Connecting…", "Connected! Starting opencode…", "Disconnected").
+ */
+@Composable
+private fun SystemMessageLabel(content: String) {
+    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Text(
+            text = content,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .background(
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    MaterialTheme.shapes.small
+                )
+                .padding(horizontal = 10.dp, vertical = 4.dp)
+        )
+    }
+}
+
+/**
+ * Bubble-style message for USER prompts, ASSISTANT (opencode) responses, and ERROR messages.
+ */
+@Composable
+private fun ChatBubble(message: ChatMessage) {
     val bgColor = when (message.type) {
         MessageType.USER -> TerminalGreen
         MessageType.ASSISTANT -> MaterialTheme.colorScheme.surfaceVariant
         MessageType.ERROR -> MaterialTheme.colorScheme.errorContainer
-        MessageType.SYSTEM -> MaterialTheme.colorScheme.surfaceVariant // unreachable, handled above
+        MessageType.SYSTEM -> MaterialTheme.colorScheme.surfaceVariant
     }
     val textColor = when (message.type) {
-        MessageType.USER -> MaterialTheme.colorScheme.surface  // dark text on bright green
+        MessageType.USER -> MaterialTheme.colorScheme.surface  // dark text on bright TerminalGreen
         MessageType.ASSISTANT -> MaterialTheme.colorScheme.onSurfaceVariant
         MessageType.ERROR -> MaterialTheme.colorScheme.onErrorContainer
         MessageType.SYSTEM -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     val alignment = if (message.type == MessageType.USER) Alignment.End else Alignment.Start
-    val useMonospace = message.type == MessageType.ASSISTANT || message.type == MessageType.SYSTEM
 
     Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = alignment) {
         Box(
@@ -180,7 +193,7 @@ fun ChatMessageItem(message: ChatMessage) {
             Text(
                 text = message.content,
                 color = textColor,
-                fontFamily = if (useMonospace) FontFamily.Monospace else FontFamily.Default,
+                fontFamily = if (message.type == MessageType.ASSISTANT) FontFamily.Monospace else FontFamily.Default,
                 style = MaterialTheme.typography.bodySmall
             )
         }
