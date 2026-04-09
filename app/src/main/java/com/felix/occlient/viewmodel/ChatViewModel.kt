@@ -49,12 +49,12 @@ class ChatViewModel(
         private const val OPENCODE_STARTUP_DELAY_MS = 1000L
 
         // Windows cmd/PowerShell: optional "PS " prefix, optional "user@host " prefix, then drive:\path>
-        private val windowsShellPromptRegex = Regex(
+        private val WINDOWS_SHELL_PROMPT_REGEX = Regex(
             """^(?:PS )?(?:[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+ )?[A-Za-z]:\\[^\n]*>\s*$"""
         )
         // Linux/macOS bash/zsh: user@host:/path$ or user@host:/path#
         // Note: ${'$'} is used instead of a bare $ to prevent Kotlin string interpolation.
-        private val unixShellPromptRegex = Regex(
+        private val UNIX_SHELL_PROMPT_REGEX = Regex(
             """^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:[^\n]*[#${'$'}]\s*$"""
         )
     }
@@ -178,7 +178,7 @@ class ChatViewModel(
     }
 
     private fun isShellPromptLine(line: String): Boolean =
-        windowsShellPromptRegex.matches(line) || unixShellPromptRegex.matches(line)
+        WINDOWS_SHELL_PROMPT_REGEX.matches(line) || UNIX_SHELL_PROMPT_REGEX.matches(line)
 
     /**
      * Returns true when [line] is a shell-prompt-prefixed echo of [cmd]

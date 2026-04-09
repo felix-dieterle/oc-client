@@ -171,16 +171,11 @@ private fun SystemMessageLabel(content: String) {
 private fun ChatBubble(message: ChatMessage) {
     val isUser = message.type == MessageType.USER
     val isError = message.type == MessageType.ERROR
-    // Boolean-condition when avoids exhaustiveness issues with unreachable enum branches.
-    val bgColor = when {
-        isUser -> TerminalGreen
-        isError -> MaterialTheme.colorScheme.errorContainer
-        else -> MaterialTheme.colorScheme.surfaceVariant  // ASSISTANT
-    }
-    val textColor = when {
-        isUser -> MaterialTheme.colorScheme.surface  // dark text on bright TerminalGreen
-        isError -> MaterialTheme.colorScheme.onErrorContainer
-        else -> MaterialTheme.colorScheme.onSurfaceVariant  // ASSISTANT
+    // Single when expression that yields both colors together, eliminating duplicate maintenance.
+    val (bgColor, textColor) = when {
+        isUser -> TerminalGreen to MaterialTheme.colorScheme.surface  // dark text on bright green
+        isError -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant to MaterialTheme.colorScheme.onSurfaceVariant  // ASSISTANT
     }
     val alignment = if (isUser) Alignment.End else Alignment.Start
 
