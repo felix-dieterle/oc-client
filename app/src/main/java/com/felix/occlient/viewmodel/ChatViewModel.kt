@@ -10,8 +10,15 @@ import com.felix.occlient.network.SshManagerHolder
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedDeque
 
-enum class MessageType { USER, SYSTEM, ERROR }
+/**
+ * USER    – message sent by the user (right-aligned green bubble).
+ * ASSISTANT – response from opencode AI (left-aligned, distinct colour).
+ * SYSTEM  – connection status / informational messages (left-aligned, muted).
+ * ERROR   – error messages (left-aligned, error colour).
+ */
+enum class MessageType { USER, ASSISTANT, SYSTEM, ERROR }
 
 data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
@@ -41,7 +48,22 @@ class ChatViewModel(
     companion object {
         /** Delay before sending the opencode command, allowing the SSH shell to fully initialise. */
         private const val OPENCODE_STARTUP_DELAY_MS = 1000L
+
+        // Shell prompt patterns:
+        // Windows cmd:  "C:\path>"  or  "user@host C:\path>"
+        // PowerShell:   "PS C:\path>"
+        // Linux bash/zsh: "user@host:~/path$" or "user@host:~/path#"
+        private val SHELL_PROMPT_REGEX = Regex(
+            """^(?:PS )?(?:[A-Za-z0-9 _.\\-]+@[A-Za-z0-9_.\\-]+ )?[A-Za-z]:\\[^\n]*>\s*$""" +
+            """|^[A-Za-z0-9_.\\-]+@[A-Za-z0-9_.\\-]+:[^\n]*[#$]\s*$"""
+        )
     }
+
+    /**
+     * Thread-safe queue tracking commands that were written to the SSH stream and whose
+     * terminal echo should be suppressed from the chat view.
+     */
+    private val pendingEchoCommands = ConcurrentLinkedDeque<String>()
 
     private var isFirstConnect = true
 
@@ -78,6 +100,8 @@ class ChatViewModel(
                 if (isFirstConnect) {
                     isFirstConnect = false
                     kotlinx.coroutines.delay(OPENCODE_STARTUP_DELAY_MS)
+                    // Track the startup command so its terminal echo is suppressed.
+                    pendingEchoCommands.addLast("opencode")
                     sshManager.sendCommand("opencode")
                 }
             } else {
@@ -94,6 +118,8 @@ class ChatViewModel(
     fun sendPrompt(text: String) {
         viewModelScope.launch {
             addMessage(text, MessageType.USER)
+            // Track the prompt so its terminal echo is suppressed in processOutput.
+            pendingEchoCommands.addLast(text.trim())
             val result = sshManager.sendCommand(text)
             if (result.isFailure) {
                 addMessage("Failed to send: ${result.exceptionOrNull()?.message}", MessageType.ERROR)
@@ -103,15 +129,43 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Processes raw SSH output:
+     * 1. Strips ANSI escape sequences and carriage returns.
+     * 2. Filters terminal echoes of commands we sent (the PTY echoes typed input).
+     * 3. Filters lines that are solely a shell prompt (noise with no AI content).
+     * 4. Classifies remaining lines as ASSISTANT responses.
+     */
     private fun processOutput(text: String) {
-        val cleaned = text
+        val withoutAnsi = text
             .replace(Regex("\u001B\\[[;\\d]*[A-Za-z]"), "")
             .replace(Regex("\u001B\\][^\u0007]*\u0007"), "")
             .replace(Regex("\r"), "")
-            .trim()
-        if (cleaned.isNotBlank()) {
+
+        val filteredLines = withoutAnsi.split("\n").filter { rawLine ->
+            val line = rawLine.trim()
+            if (line.isEmpty()) return@filter false
+
+            // Check whether this line is the terminal echo of a sent command.
+            // The echo may appear as either the plain command or shell-prompt + command.
+            val echoMatch = pendingEchoCommands.firstOrNull { cmd ->
+                line == cmd || line.endsWith(">$cmd") || line.endsWith("> $cmd")
+            }
+            if (echoMatch != null) {
+                pendingEchoCommands.remove(echoMatch)
+                return@filter false
+            }
+
+            // Suppress lines that are purely a shell prompt (no AI content).
+            if (SHELL_PROMPT_REGEX.matches(line)) return@filter false
+
+            true
+        }
+
+        val result = filteredLines.joinToString("\n").trim()
+        if (result.isNotBlank()) {
             viewModelScope.launch {
-                addMessage(cleaned, MessageType.SYSTEM)
+                addMessage(result, MessageType.ASSISTANT)
             }
         }
     }

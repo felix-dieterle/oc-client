@@ -137,17 +137,38 @@ fun ChatScreen(
 
 @Composable
 fun ChatMessageItem(message: ChatMessage) {
+    // SYSTEM messages (connection status, info) are rendered as small centred labels.
+    if (message.type == MessageType.SYSTEM) {
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Text(
+                text = message.content,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .background(
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        MaterialTheme.shapes.small
+                    )
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            )
+        }
+        return
+    }
+
     val bgColor = when (message.type) {
-        MessageType.USER -> MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-        MessageType.SYSTEM -> MaterialTheme.colorScheme.surfaceVariant
+        MessageType.USER -> TerminalGreen
+        MessageType.ASSISTANT -> MaterialTheme.colorScheme.surfaceVariant
         MessageType.ERROR -> MaterialTheme.colorScheme.errorContainer
+        MessageType.SYSTEM -> MaterialTheme.colorScheme.surfaceVariant // unreachable, handled above
     }
     val textColor = when (message.type) {
-        MessageType.USER -> MaterialTheme.colorScheme.primary
-        MessageType.SYSTEM -> MaterialTheme.colorScheme.onSurfaceVariant
+        MessageType.USER -> MaterialTheme.colorScheme.surface  // dark text on bright green
+        MessageType.ASSISTANT -> MaterialTheme.colorScheme.onSurfaceVariant
         MessageType.ERROR -> MaterialTheme.colorScheme.onErrorContainer
+        MessageType.SYSTEM -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     val alignment = if (message.type == MessageType.USER) Alignment.End else Alignment.Start
+    val useMonospace = message.type == MessageType.ASSISTANT || message.type == MessageType.SYSTEM
 
     Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = alignment) {
         Box(
@@ -159,7 +180,7 @@ fun ChatMessageItem(message: ChatMessage) {
             Text(
                 text = message.content,
                 color = textColor,
-                fontFamily = if (message.type == MessageType.SYSTEM) FontFamily.Monospace else FontFamily.Default,
+                fontFamily = if (useMonospace) FontFamily.Monospace else FontFamily.Default,
                 style = MaterialTheme.typography.bodySmall
             )
         }
