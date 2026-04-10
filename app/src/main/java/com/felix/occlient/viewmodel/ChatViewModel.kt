@@ -95,8 +95,14 @@ class ChatViewModel(
     private val awaitingOpenCodeAck = AtomicBoolean(false)
 
     /**
-     * Holds the most-recently received raw SSH text that has not yet been processed.  Written
-     * from the IO thread; read and cleared from the main thread after the debounce delay.
+     * Accumulates raw SSH text received between debounce windows.  Written from the IO thread
+     * via atomic append; read and cleared from the main thread after the debounce delay.
+     *
+     * opencode-cli can send its AI response as many small incremental chunks (cursor moves,
+     * partial text writes, etc.) rather than a single full-screen repaint.  Replacing the
+     * buffer on each chunk would silently discard all but the last one.  Accumulating ensures
+     * that [flushOutput] always receives the complete sequence of bytes emitted since the last
+     * flush, so ANSI stripping can recover all visible text.
      */
     private val pendingOutput = AtomicReference<String?>(null)
 
@@ -194,13 +200,15 @@ class ChatViewModel(
     /**
      * Receives raw SSH output from the IO thread.
      *
-     * opencode-cli is a full-screen TUI that can send many screen-redraw batches per second
-     * while streaming an AI response.  Processing each batch individually would flood the chat
-     * with dozens of ASSISTANT bubbles containing full-screen snapshots.  Instead we:
+     * opencode-cli streams its AI response as many small incremental chunks (cursor moves,
+     * colour resets, partial text writes, …) rather than a single full-screen repaint.
+     * Processing each chunk individually would flood the chat with dozens of ASSISTANT bubbles.
+     * Instead we:
      *
      * 1. Fire the one-time "opencode is active" ack immediately on the very first batch.
-     * 2. Store the latest raw batch in an AtomicReference (overwriting any unprocessed earlier
-     *    batch – we only care about the most recent TUI state).
+     * 2. Atomically APPEND each chunk to [pendingOutput] so no bytes are discarded between
+     *    debounce windows.  (Replacing with only the latest chunk lost all earlier content,
+     *    causing the response to appear blank after ANSI stripping.)
      * 3. Debounce: cancel any pending flush job and schedule a new one [OUTPUT_DEBOUNCE_MS] ms
      *    in the future.  The flush only runs after the TUI goes quiet (response complete / idle).
      * 4. The flush strips ANSI, filters echoes and shell prompts, then UPDATES (or creates) a
@@ -209,8 +217,8 @@ class ChatViewModel(
     private fun processOutput(text: String) {
         val isFirstAck = awaitingOpenCodeAck.getAndSet(false)
 
-        // Keep only the latest snapshot; earlier intermediate frames can be discarded.
-        pendingOutput.set(text)
+        // Accumulate all chunks so the debounce handler always sees the full response text.
+        pendingOutput.updateAndGet { prev -> (prev ?: "") + text }
 
         viewModelScope.launch {
             // isFirstAck is read atomically above and used only inside this launch block,
