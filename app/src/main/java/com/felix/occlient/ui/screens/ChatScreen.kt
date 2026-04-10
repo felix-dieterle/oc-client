@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Assignment
@@ -17,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.core.*
 import com.felix.occlient.network.SshConnectionState
 import com.felix.occlient.ui.theme.TerminalGreen
 import com.felix.occlient.viewmodel.ChatMessage
@@ -34,12 +36,15 @@ fun ChatScreen(
     val connectionState by viewModel.connectionState.collectAsState()
     val sessionName by viewModel.sessionName.collectAsState()
     val error by viewModel.error.collectAsState()
+    val isProcessing by viewModel.isProcessing.collectAsState()
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+    // Scroll to end whenever a new message arrives or the processing indicator appears/disappears.
+    val totalItems = messages.size + if (isProcessing) 1 else 0
+    LaunchedEffect(totalItems) {
+        if (totalItems > 0) listState.animateScrollToItem(totalItems - 1)
     }
 
     LaunchedEffect(error) {
@@ -103,7 +108,7 @@ fun ChatScreen(
                         placeholder = { Text("Enter prompt...", fontFamily = FontFamily.Monospace) },
                         singleLine = false,
                         maxLines = 4,
-                        enabled = connectionState == SshConnectionState.CONNECTED
+                        enabled = connectionState == SshConnectionState.CONNECTED && !isProcessing
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     FilledIconButton(
@@ -113,7 +118,7 @@ fun ChatScreen(
                                 inputText = ""
                             }
                         },
-                        enabled = connectionState == SshConnectionState.CONNECTED && inputText.isNotBlank()
+                        enabled = connectionState == SshConnectionState.CONNECTED && inputText.isNotBlank() && !isProcessing
                     ) {
                         Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                     }
@@ -130,6 +135,11 @@ fun ChatScreen(
         ) {
             items(messages, key = { it.id }) { message ->
                 ChatMessageItem(message)
+            }
+            if (isProcessing) {
+                item(key = "typing_indicator") {
+                    TypingIndicator()
+                }
             }
         }
     }
@@ -161,6 +171,57 @@ private fun SystemMessageLabel(content: String) {
                 )
                 .padding(horizontal = 10.dp, vertical = 4.dp)
         )
+    }
+}
+
+/**
+ * Animated three-dot indicator shown while opencode is computing a response.
+ * Styled like an ASSISTANT bubble (left-aligned, surfaceVariant background) so it visually
+ * signals that a reply is on the way.
+ */
+@Composable
+private fun TypingIndicator() {
+    val infiniteTransition = rememberInfiniteTransition(label = "typing")
+    val dot1Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            tween(500, easing = LinearEasing), RepeatMode.Reverse,
+            initialStartOffset = StartOffset(0)
+        ),
+        label = "dot1"
+    )
+    val dot2Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            tween(500, easing = LinearEasing), RepeatMode.Reverse,
+            initialStartOffset = StartOffset(150)
+        ),
+        label = "dot2"
+    )
+    val dot3Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            tween(500, easing = LinearEasing), RepeatMode.Reverse,
+            initialStartOffset = StartOffset(300)
+        ),
+        label = "dot3"
+    )
+
+    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
+        Box(
+            modifier = Modifier
+                .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                for (alpha in listOf(dot1Alpha, dot2Alpha, dot3Alpha)) {
+                    Box(Modifier.size(7.dp).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha), CircleShape))
+                }
+            }
+        }
     }
 }
 

@@ -46,6 +46,10 @@ class ChatViewModel(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    /** True while opencode is expected to be computing a response. */
+    private val _isProcessing = MutableStateFlow(false)
+    val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
+
     companion object {
         /** Delay before sending the opencode-cli command, allowing the SSH shell to fully initialise. */
         private const val OPENCODE_STARTUP_DELAY_MS = 1000L
@@ -82,6 +86,12 @@ class ChatViewModel(
         viewModelScope.launch {
             sessionRepository.getSessionById(sessionId)?.let {
                 _sessionName.value = it.name
+            }
+        }
+        // Clear the processing indicator if the connection is lost so the spinner never gets stuck.
+        viewModelScope.launch {
+            connectionState.collect { state ->
+                if (state != SshConnectionState.CONNECTED) _isProcessing.value = false
             }
         }
         sshManager.onOutputReceived = { text ->
@@ -138,6 +148,7 @@ class ChatViewModel(
             if (result.isFailure) {
                 addMessage("Failed to send: ${result.exceptionOrNull()?.message}", MessageType.ERROR)
             } else {
+                _isProcessing.value = true
                 sessionRepository.incrementMessageCount(sessionId)
             }
         }
@@ -186,6 +197,7 @@ class ChatViewModel(
 
         val result = filteredLines.joinToString("\n").trim()
         if (result.isNotBlank()) {
+            _isProcessing.value = false
             viewModelScope.launch {
                 addMessage(result, MessageType.ASSISTANT)
             }
