@@ -10,7 +10,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.InputStream
 import java.io.OutputStream
-import java.io.PrintStream
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
@@ -142,7 +141,7 @@ class SshManager {
             appendLog("SSH session established")
 
             val channel = session.openChannel("shell") as ChannelShell
-            channel.setPtyType("vt100")
+            channel.setPtyType("xterm-256color")
             channel.setPtySize(220, 50, 1320, 300)
             outputStream = channel.outputStream
             inputStream = channel.inputStream
@@ -207,8 +206,12 @@ class SshManager {
     suspend fun sendCommand(command: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val out = outputStream ?: return@withContext Result.failure(Exception("Not connected"))
-            val ps = PrintStream(out, true, Charsets.UTF_8)
-            ps.println(command)
+            // Use '\r' (carriage return) as the line terminator.  opencode-cli puts the PTY into
+            // raw mode, so the terminal driver no longer converts newlines.  In raw mode '\r' is
+            // the Enter key signal that TUI frameworks (e.g. Bubbletea) listen for.  Sending '\n'
+            // instead would be interpreted as Ctrl-J and the message would never be submitted.
+            out.write(command.toByteArray(Charsets.UTF_8))
+            out.write('\r'.code)
             out.flush()
             appendLog("→ $command")
             Result.success(Unit)

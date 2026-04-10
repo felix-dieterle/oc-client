@@ -8,10 +8,13 @@ import com.felix.occlient.network.SshConfig
 import com.felix.occlient.network.SshConnectionState
 import com.felix.occlient.network.SshManagerHolder
 import com.felix.occlient.util.AnsiUtils
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * USER      – message sent by the user (right-aligned green bubble).
@@ -54,6 +57,14 @@ class ChatViewModel(
         /** Delay before sending the opencode-cli command, allowing the SSH shell to fully initialise. */
         private const val OPENCODE_STARTUP_DELAY_MS = 1000L
 
+        /**
+         * Debounce window for raw SSH output.  opencode-cli is a full-screen TUI that redraws
+         * the entire terminal on every update (streaming tokens, cursor blinks, …).  Rather than
+         * adding a new ASSISTANT message for each redraw we wait until no new bytes have arrived
+         * for this many milliseconds and then process the latest snapshot.
+         */
+        private const val OUTPUT_DEBOUNCE_MS = 500L
+
         // Windows cmd/PowerShell: optional "PS " prefix, optional "user@host " prefix, then drive:\path>
         private val WINDOWS_SHELL_PROMPT_REGEX = Regex(
             """^(?:PS )?(?:[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+ )?[A-Za-z]:\\[^\n]*>\s*$"""
@@ -83,6 +94,25 @@ class ChatViewModel(
      */
     private val awaitingOpenCodeAck = AtomicBoolean(false)
 
+    /**
+     * Holds the most-recently received raw SSH text that has not yet been processed.  Written
+     * from the IO thread; read and cleared from the main thread after the debounce delay.
+     */
+    private val pendingOutput = AtomicReference<String?>(null)
+
+    /** Debounce job for [processOutput]. Cancelled and restarted on each incoming batch. */
+    private var outputDebounceJob: Job? = null
+
+    /**
+     * ID of the ASSISTANT message for the current conversation turn.  Rather than appending a
+     * new bubble for every TUI screen redraw we UPDATE this message in-place.  Reset to null
+     * when the user sends the next prompt so the following response gets a fresh bubble.
+     *
+     * Accessed exclusively from the main thread (all writes/reads happen inside
+     * [viewModelScope] coroutines which dispatch to [kotlinx.coroutines.Dispatchers.Main]).
+     */
+    private var currentAssistantMsgId: String? = null
+
     init {
         viewModelScope.launch {
             sessionRepository.getSessionById(sessionId)?.let {
@@ -92,7 +122,10 @@ class ChatViewModel(
         // Clear the processing indicator if the connection is lost so the spinner never gets stuck.
         viewModelScope.launch {
             connectionState.collect { state ->
-                if (state != SshConnectionState.CONNECTED) _isProcessing.value = false
+                if (state != SshConnectionState.CONNECTED) {
+                    _isProcessing.value = false
+                    currentAssistantMsgId = null
+                }
             }
         }
         sshManager.onOutputReceived = { text ->
@@ -143,6 +176,8 @@ class ChatViewModel(
 
     fun sendPrompt(text: String) {
         viewModelScope.launch {
+            // Each new user turn gets a fresh ASSISTANT bubble.
+            currentAssistantMsgId = null
             addMessage(text, MessageType.USER)
             // Track the prompt so its terminal echo is suppressed in processOutput.
             pendingEchoCommands.merge(text.trim(), 1, Int::plus)
@@ -157,21 +192,56 @@ class ChatViewModel(
     }
 
     /**
-     * Processes raw SSH output:
-     * 1. Strips ANSI/VT100 escape sequences and carriage returns.
-     * 2. Filters terminal echoes of commands we sent (the PTY echoes typed input).
-     * 3. Detects shell prompt lines – if one is found while waiting for a response, the
-     *    processing indicator is cleared (opencode may have exited back to the shell).
-     * 4. Filters lines that are solely a shell prompt (noise with no AI content).
-     * 5. Classifies remaining lines as ASSISTANT responses.
-     * 6. If this is the first batch of output after launching opencode-cli, emits a SYSTEM
-     *    acknowledgement so the user knows opencode is active, regardless of whether the
-     *    batch also contained non-empty filterable content (e.g. a shell error message).
+     * Receives raw SSH output from the IO thread.
+     *
+     * opencode-cli is a full-screen TUI that can send many screen-redraw batches per second
+     * while streaming an AI response.  Processing each batch individually would flood the chat
+     * with dozens of ASSISTANT bubbles containing full-screen snapshots.  Instead we:
+     *
+     * 1. Fire the one-time "opencode is active" ack immediately on the very first batch.
+     * 2. Store the latest raw batch in an AtomicReference (overwriting any unprocessed earlier
+     *    batch – we only care about the most recent TUI state).
+     * 3. Debounce: cancel any pending flush job and schedule a new one [OUTPUT_DEBOUNCE_MS] ms
+     *    in the future.  The flush only runs after the TUI goes quiet (response complete / idle).
+     * 4. The flush strips ANSI, filters echoes and shell prompts, then UPDATES (or creates) a
+     *    single ASSISTANT bubble for this conversation turn instead of appending new ones.
      */
     private fun processOutput(text: String) {
-        // Capture and clear the ack flag atomically so exactly one message is shown.
         val isFirstAck = awaitingOpenCodeAck.getAndSet(false)
 
+        // Keep only the latest snapshot; earlier intermediate frames can be discarded.
+        pendingOutput.set(text)
+
+        viewModelScope.launch {
+            // isFirstAck is read atomically above and used only inside this launch block,
+            // which runs on the main thread – no additional synchronisation is needed.
+            if (isFirstAck) {
+                addMessage("opencode is active and sending output.", MessageType.SYSTEM)
+            }
+
+            // Cancel any pending flush and start a new one.  Both the cancel and the new launch
+            // happen on the main thread (viewModelScope → Dispatchers.Main) so flushOutput can
+            // never be called concurrently, and currentAssistantMsgId / _messages are safe.
+            outputDebounceJob?.cancel()
+            outputDebounceJob = launch {
+                delay(OUTPUT_DEBOUNCE_MS)
+                val raw = pendingOutput.getAndSet(null) ?: return@launch
+                flushOutput(raw)
+            }
+        }
+    }
+
+    /**
+     * Processes a raw SSH snapshot after the debounce window has elapsed:
+     * 1. Strips ANSI/VT100 escape sequences and carriage returns.
+     * 2. Filters terminal echoes of commands we sent.
+     * 3. Detects shell prompt lines – clears the spinner if opencode exited back to the shell.
+     * 4. Filters lines that are solely a shell prompt.
+     * 5. Updates (or creates) the current ASSISTANT message with the remaining content.
+     *
+     * Must be called on the main thread (via viewModelScope).
+     */
+    private fun flushOutput(text: String) {
         val withoutAnsi = AnsiUtils.strip(text)
 
         var sawShellPrompt = false
@@ -180,8 +250,6 @@ class ChatViewModel(
             if (line.isEmpty()) return@filter false
 
             // Check whether this line is the terminal echo of a sent command.
-            // The echo may appear as the plain command (O(1) exact-match lookup) or as
-            // shell-prompt + command (O(n) where n = distinct pending commands, typically ≤3).
             val echoedCmd: String? = pendingEchoCommands[line]
                 ?.let { line }
                 ?: pendingEchoCommands.keys.asSequence().firstOrNull { cmd ->
@@ -194,7 +262,6 @@ class ChatViewModel(
                 return@filter false
             }
 
-            // Detect shell prompt lines: they indicate opencode exited back to the shell.
             if (isShellPromptLine(line)) {
                 sawShellPrompt = true
                 return@filter false
@@ -203,31 +270,34 @@ class ChatViewModel(
             true
         }
 
-        // Two distinct conditions clear the processing indicator:
-        // 1. A shell prompt in this batch means opencode exited back to the shell; no AI
-        //    response will follow, so release the spinner immediately.
-        // 2. Non-blank result content (below) means an AI response arrived normally.
         if (sawShellPrompt && _isProcessing.value) {
             _isProcessing.value = false
         }
 
         val result = filteredLines.joinToString("\n").trim()
 
-        // Fire the startup acknowledgement unconditionally on the first incoming batch so
-        // the user always sees that opencode is active, even when the batch itself contains
-        // error output (e.g. "command not found") or non-empty TUI content.  This block is
-        // intentionally placed before the result check so the SYSTEM message appears first.
-        if (isFirstAck) {
-            viewModelScope.launch {
-                addMessage("opencode is active and sending output.", MessageType.SYSTEM)
-            }
-        }
-
         if (result.isNotBlank()) {
-            // Clear the spinner when a real AI response arrives (the normal path).
             _isProcessing.value = false
-            viewModelScope.launch {
-                addMessage(result, MessageType.ASSISTANT)
+            val existingId = currentAssistantMsgId
+            if (existingId != null) {
+                // Update the existing bubble for this conversation turn in-place.
+                val msgs = _messages.value.toMutableList()
+                val idx = msgs.indexOfFirst { it.id == existingId }
+                if (idx >= 0) {
+                    msgs[idx] = msgs[idx].copy(content = result)
+                    _messages.value = msgs
+                } else {
+                    // Message was removed externally – create a fresh bubble rather than
+                    // silently discarding the update.
+                    currentAssistantMsgId = null
+                    val newMsg = ChatMessage(content = result, type = MessageType.ASSISTANT)
+                    currentAssistantMsgId = newMsg.id
+                    _messages.value = _messages.value + newMsg
+                }
+            } else {
+                val newMsg = ChatMessage(content = result, type = MessageType.ASSISTANT)
+                currentAssistantMsgId = newMsg.id
+                _messages.value = _messages.value + newMsg
             }
         }
     }
@@ -254,6 +324,7 @@ class ChatViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        outputDebounceJob?.cancel()
         sshManager.onOutputReceived = null
     }
 }
