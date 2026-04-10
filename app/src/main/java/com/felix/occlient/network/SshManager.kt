@@ -67,6 +67,28 @@ class SshManager {
         _logs.value = _logs.value + "$ts$masked"
     }
 
+    /**
+     * Converts control characters in [raw] to visible ASCII representations so that the full
+     * SSH response (including opencode's TUI drawing sequences) can be stored in the log
+     * without any information being silently discarded.
+     *
+     * Examples: ESC → `<ESC>`, CR → `<CR>`, NUL → `<NUL>`, other C0 bytes → `<XX>` hex.
+     * Printable characters and newlines are kept as-is so the log remains readable.
+     */
+    private fun escapeControlChars(raw: String): String = buildString(raw.length * 2) {
+        for (ch in raw) {
+            when {
+                ch == '\u001B' -> append("<ESC>")
+                ch == '\r'     -> append("<CR>")
+                ch == '\u0000' -> append("<NUL>")
+                ch == '\n'     -> append('\n')
+                ch.code < 0x20 || ch.code == 0x7F ->
+                    append("<${ch.code.toString(16).uppercase().padStart(2, '0')}>")
+                else           -> append(ch)
+            }
+        }
+    }
+
     /** Returns a masked representation that hides username length, e.g. "john" → "j***", "a" → "***". */
     private fun maskUsername(username: String): String = when {
         username.isEmpty() -> ""
@@ -158,9 +180,10 @@ class SshManager {
                         val n = inputStream?.read(buffer, 0, minOf(available, buffer.size)) ?: -1
                         if (n > 0) {
                             val text = String(buffer, 0, n, Charsets.UTF_8)
-                            // Prefix with direction arrow and raw byte count so the log shows
-                            // how much data arrived even when the content is mostly TUI sequences.
-                            appendLog("← ${n}b: $text")
+                            // Log the complete raw response with escape sequences rendered as
+                            // visible tokens (e.g. <ESC>[?1049h) so the log captures exactly
+                            // what opencode sent, including TUI drawing commands.
+                            appendLog("← ${n}b: ${escapeControlChars(text)}")
                             onOutputReceived?.invoke(text)
                         }
                     } else {

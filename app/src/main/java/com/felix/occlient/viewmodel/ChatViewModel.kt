@@ -77,8 +77,9 @@ class ChatViewModel(
 
     /**
      * Set to true just before sending `opencode-cli` so that the first batch of raw SSH output
-     * received afterwards (typically opencode's TUI drawing sequences) triggers a SYSTEM
-     * acknowledgement message instead of silently disappearing.  Cleared atomically on first use.
+     * received afterwards triggers a SYSTEM acknowledgement message.  Cleared atomically on
+     * first use.  The ack fires unconditionally (even when the batch also contains non-empty
+     * content such as a shell error) so the user always sees a startup indicator.
      */
     private val awaitingOpenCodeAck = AtomicBoolean(false)
 
@@ -127,6 +128,7 @@ class ChatViewModel(
                     // very first incoming bytes (opencode's TUI drawing sequences) are noticed.
                     awaitingOpenCodeAck.set(true)
                     sshManager.sendCommand("opencode-cli")
+                    addMessage("opencode-cli launched. Waiting for response…", MessageType.SYSTEM)
                 }
             } else {
                 addMessage("Connection failed: ${result.exceptionOrNull()?.message}", MessageType.ERROR)
@@ -158,11 +160,13 @@ class ChatViewModel(
      * Processes raw SSH output:
      * 1. Strips ANSI/VT100 escape sequences and carriage returns.
      * 2. Filters terminal echoes of commands we sent (the PTY echoes typed input).
-     * 3. Filters lines that are solely a shell prompt (noise with no AI content).
-     * 4. Classifies remaining lines as ASSISTANT responses.
-     * 5. If this is the first batch of output after launching opencode-cli and everything was
-     *    filtered (i.e. the TUI startup drawing was silently discarded), emits a SYSTEM
-     *    acknowledgement so the user knows opencode is actually running.
+     * 3. Detects shell prompt lines – if one is found while waiting for a response, the
+     *    processing indicator is cleared (opencode may have exited back to the shell).
+     * 4. Filters lines that are solely a shell prompt (noise with no AI content).
+     * 5. Classifies remaining lines as ASSISTANT responses.
+     * 6. If this is the first batch of output after launching opencode-cli, emits a SYSTEM
+     *    acknowledgement so the user knows opencode is active, regardless of whether the
+     *    batch also contained non-empty filterable content (e.g. a shell error message).
      */
     private fun processOutput(text: String) {
         // Capture and clear the ack flag atomically so exactly one message is shown.
@@ -170,6 +174,7 @@ class ChatViewModel(
 
         val withoutAnsi = AnsiUtils.strip(text)
 
+        var sawShellPrompt = false
         val filteredLines = withoutAnsi.split("\n").filter { rawLine ->
             val line = rawLine.trim()
             if (line.isEmpty()) return@filter false
@@ -189,23 +194,40 @@ class ChatViewModel(
                 return@filter false
             }
 
-            // Suppress lines that are purely a shell prompt (no AI content).
-            if (isShellPromptLine(line)) return@filter false
+            // Detect shell prompt lines: they indicate opencode exited back to the shell.
+            if (isShellPromptLine(line)) {
+                sawShellPrompt = true
+                return@filter false
+            }
 
             true
         }
 
+        // Two distinct conditions clear the processing indicator:
+        // 1. A shell prompt in this batch means opencode exited back to the shell; no AI
+        //    response will follow, so release the spinner immediately.
+        // 2. Non-blank result content (below) means an AI response arrived normally.
+        if (sawShellPrompt && _isProcessing.value) {
+            _isProcessing.value = false
+        }
+
         val result = filteredLines.joinToString("\n").trim()
+
+        // Fire the startup acknowledgement unconditionally on the first incoming batch so
+        // the user always sees that opencode is active, even when the batch itself contains
+        // error output (e.g. "command not found") or non-empty TUI content.  This block is
+        // intentionally placed before the result check so the SYSTEM message appears first.
+        if (isFirstAck) {
+            viewModelScope.launch {
+                addMessage("opencode is active and sending output.", MessageType.SYSTEM)
+            }
+        }
+
         if (result.isNotBlank()) {
+            // Clear the spinner when a real AI response arrives (the normal path).
             _isProcessing.value = false
             viewModelScope.launch {
                 addMessage(result, MessageType.ASSISTANT)
-            }
-        } else if (isFirstAck) {
-            // Raw output arrived (opencode's TUI drawing sequences) but everything was
-            // filtered.  Show a SYSTEM message so the user knows opencode is alive.
-            viewModelScope.launch {
-                addMessage("opencode is running. Type your prompt below.", MessageType.SYSTEM)
             }
         }
     }
