@@ -32,7 +32,7 @@ fun LogScreen(onNavigateBack: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     // Strip ANSI/VT100 escape sequences for display so the log is human-readable.
-    // The clipboard action still copies the raw bytes for debugging.
+    // The clipboard action copies the same clean text so it is safe to share.
     val displayLines = remember(logs) {
         logs.flatMap { entry ->
             AnsiUtils.strip(entry).lines()
@@ -55,7 +55,7 @@ fun LogScreen(onNavigateBack: () -> Unit) {
                 actions = {
                     IconButton(
                         onClick = {
-                            clipboardManager.setText(AnnotatedString(logs.joinToString("\n")))
+                            clipboardManager.setText(AnnotatedString(displayLines.joinToString("\n")))
                             scope.launch { snackbarHostState.showSnackbar("Logs copied to clipboard") }
                         }
                     ) {

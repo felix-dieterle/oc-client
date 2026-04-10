@@ -35,6 +35,11 @@ class SshManager {
     private val _logs = MutableStateFlow<List<String>>(emptyList())
     val logs: StateFlow<List<String>> = _logs
 
+    /** Username of the active connection, kept to mask it in log entries. */
+    private var currentUsername: String = ""
+    /** Pre-compiled regex for efficient word-boundary replacement of [currentUsername]. Null when no user is set. */
+    private var usernameRegex: Regex? = null
+
     private var jschSession: Session? = null
     private var shellChannel: ChannelShell? = null
     private var outputStream: OutputStream? = null
@@ -46,10 +51,27 @@ class SshManager {
     var onOutputReceived: ((String) -> Unit)? = null
 
     fun appendLog(message: String) {
-        _logs.value = _logs.value + message
+        val regex = usernameRegex
+        val masked = if (regex != null)
+            message.replace(regex, maskUsername(currentUsername))
+        else
+            message
+        _logs.value = _logs.value + masked
+    }
+
+    /** Returns a masked representation that hides username length, e.g. "john" → "j***", "a" → "***". */
+    private fun maskUsername(username: String): String = when {
+        username.isEmpty() -> ""
+        username.length == 1 -> "***"
+        else -> "${username.first()}***"
     }
 
     suspend fun connect(config: SshConfig): Result<Unit> = withContext(Dispatchers.IO) {
+        currentUsername = config.username
+        usernameRegex = if (config.username.isNotBlank())
+            Regex("\\b${Regex.escape(config.username)}\\b")
+        else
+            null
         _connectionState.value = SshConnectionState.CONNECTING
         appendLog("Connecting to ${config.host}:${config.port} as ${config.username}...")
         val usingKey = config.privateKey.isNotBlank()
@@ -172,6 +194,8 @@ class SshManager {
         jschSession = null
         outputStream = null
         inputStream = null
+        currentUsername = ""
+        usernameRegex = null
         _connectionState.value = SshConnectionState.DISCONNECTED
         appendLog("Disconnected")
     }
