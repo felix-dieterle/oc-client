@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.StateFlow
 import java.io.InputStream
 import java.io.OutputStream
 import java.io.PrintStream
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 
 enum class SshConnectionState {
     DISCONNECTED, CONNECTING, CONNECTED, ERROR
@@ -27,6 +29,8 @@ class SshManager {
     companion object {
         /** Interval between polls when no SSH data is available, in milliseconds. */
         private const val SSH_READ_POLL_INTERVAL_MS = 50L
+
+        private val TIMESTAMP_FMT = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
     }
 
     private val _connectionState = MutableStateFlow(SshConnectionState.DISCONNECTED)
@@ -51,12 +55,13 @@ class SshManager {
     var onOutputReceived: ((String) -> Unit)? = null
 
     fun appendLog(message: String) {
+        val ts = "[${LocalTime.now().format(TIMESTAMP_FMT)}] "
         val regex = usernameRegex
         val masked = if (regex != null)
             message.replace(regex, maskUsername(currentUsername))
         else
             message
-        _logs.value = _logs.value + masked
+        _logs.value = _logs.value + "$ts$masked"
     }
 
     /** Returns a masked representation that hides username length, e.g. "john" → "j***", "a" → "***". */
