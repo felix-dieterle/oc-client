@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.*
@@ -81,6 +82,15 @@ fun ChatScreen(
                 actions = {
                     IconButton(onClick = onNavigateToLog) {
                         Icon(Icons.AutoMirrored.Filled.Assignment, contentDescription = "Logs")
+                    }
+                    if (isProcessing) {
+                        IconButton(onClick = { viewModel.cancelProcessing() }) {
+                            Icon(
+                                Icons.Filled.Cancel,
+                                contentDescription = "Cancel processing",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                     if (connectionState == SshConnectionState.CONNECTED) {
                         IconButton(onClick = { viewModel.disconnect() }) {
