@@ -281,12 +281,18 @@ class ChatViewModel(
             val existingId = currentAssistantMsgId
             if (existingId != null) {
                 // Update the existing bubble for this conversation turn in-place.
-                // Use a mutable list + indexed update to avoid allocating a full mapped copy.
                 val msgs = _messages.value.toMutableList()
                 val idx = msgs.indexOfFirst { it.id == existingId }
                 if (idx >= 0) {
                     msgs[idx] = msgs[idx].copy(content = result)
                     _messages.value = msgs
+                } else {
+                    // Message was removed externally – create a fresh bubble rather than
+                    // silently discarding the update.
+                    currentAssistantMsgId = null
+                    val newMsg = ChatMessage(content = result, type = MessageType.ASSISTANT)
+                    currentAssistantMsgId = newMsg.id
+                    _messages.value = _messages.value + newMsg
                 }
             } else {
                 val newMsg = ChatMessage(content = result, type = MessageType.ASSISTANT)
@@ -318,6 +324,7 @@ class ChatViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        outputDebounceJob?.cancel()
         sshManager.onOutputReceived = null
     }
 }

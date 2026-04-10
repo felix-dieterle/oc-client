@@ -210,7 +210,8 @@ class SshManager {
             // raw mode, so the terminal driver no longer converts newlines.  In raw mode '\r' is
             // the Enter key signal that TUI frameworks (e.g. Bubbletea) listen for.  Sending '\n'
             // instead would be interpreted as Ctrl-J and the message would never be submitted.
-            out.write((command + "\r").toByteArray(Charsets.UTF_8))
+            out.write(command.toByteArray(Charsets.UTF_8))
+            out.write('\r'.code)
             out.flush()
             appendLog("→ $command")
             Result.success(Unit)
