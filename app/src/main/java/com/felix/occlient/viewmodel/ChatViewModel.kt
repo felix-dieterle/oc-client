@@ -211,8 +211,9 @@ class ChatViewModel(
      *    causing the response to appear blank after ANSI stripping.)
      * 3. Debounce: cancel any pending flush job and schedule a new one [OUTPUT_DEBOUNCE_MS] ms
      *    in the future.  The flush only runs after the TUI goes quiet (response complete / idle).
-     * 4. The flush strips ANSI, filters echoes and shell prompts, then UPDATES (or creates) a
-     *    single ASSISTANT bubble for this conversation turn instead of appending new ones.
+     * 4. The flush extracts the latest screen render, strips ANSI, filters echoes and shell
+     *    prompts, then UPDATES (or creates) a single ASSISTANT bubble for this conversation
+     *    turn instead of appending new ones.
      */
     private fun processOutput(text: String) {
         val isFirstAck = awaitingOpenCodeAck.getAndSet(false)
@@ -240,17 +241,37 @@ class ChatViewModel(
     }
 
     /**
+     * Extracts just the latest full-screen render from the accumulated raw SSH bytes.
+     *
+     * opencode-cli is built with Bubbletea, which hides the cursor at the very start of every
+     * render frame (ESC[?25l) to suppress cursor flicker and shows it again at the end
+     * (ESC[?25h).  When an AI response is streamed, opencode redraws the entire TUI on every
+     * token, so [pendingOutput] accumulates N complete render frames.  Naively stripping ANSI
+     * from all N frames concatenates the text from every intermediate state, producing garbled
+     * output like "WhyWhy didWhy did the chicken…".
+     *
+     * By finding the LAST occurrence of ESC[?25l we isolate the most recent (and most
+     * complete) render frame.  Stripping ANSI from just that frame recovers the final visible
+     * text cleanly.  Falls back to the full string if no hide-cursor marker is found.
+     */
+    private fun extractLatestScreen(raw: String): String {
+        val lastHideCursor = raw.lastIndexOf("\u001B[?25l")
+        return if (lastHideCursor >= 0) raw.substring(lastHideCursor) else raw
+    }
+
+    /**
      * Processes a raw SSH snapshot after the debounce window has elapsed:
-     * 1. Strips ANSI/VT100 escape sequences and carriage returns.
-     * 2. Filters terminal echoes of commands we sent.
-     * 3. Detects shell prompt lines – clears the spinner if opencode exited back to the shell.
-     * 4. Filters lines that are solely a shell prompt.
-     * 5. Updates (or creates) the current ASSISTANT message with the remaining content.
+     * 1. Extracts the latest full-screen render to avoid processing intermediate streaming states.
+     * 2. Strips ANSI/VT100 escape sequences and carriage returns.
+     * 3. Filters terminal echoes of commands we sent.
+     * 4. Detects shell prompt lines – clears the spinner if opencode exited back to the shell.
+     * 5. Filters lines that are solely a shell prompt.
+     * 6. Updates (or creates) the current ASSISTANT message with the remaining content.
      *
      * Must be called on the main thread (via viewModelScope).
      */
     private fun flushOutput(text: String) {
-        val withoutAnsi = AnsiUtils.strip(text)
+        val withoutAnsi = AnsiUtils.strip(extractLatestScreen(text))
 
         var sawShellPrompt = false
         val filteredLines = withoutAnsi.split("\n").filter { rawLine ->
@@ -326,6 +347,19 @@ class ChatViewModel(
 
     private fun addMessage(content: String, type: MessageType) {
         _messages.value = _messages.value + ChatMessage(content = content, type = type)
+    }
+
+    /**
+     * Clears the processing indicator when the user wants to recover from a frozen / stuck state.
+     *
+     * opencode-cli can take a long time to respond (AI API latency) during which the input
+     * field is disabled and the app appears frozen.  This lets the user regain control without
+     * needing to disconnect and reconnect.  Any response that eventually arrives will still be
+     * displayed – it will simply create a new ASSISTANT bubble rather than updating the old one.
+     */
+    fun cancelProcessing() {
+        _isProcessing.value = false
+        currentAssistantMsgId = null
     }
 
     fun clearError() { _error.value = null }
