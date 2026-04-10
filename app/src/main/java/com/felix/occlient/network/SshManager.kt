@@ -1,5 +1,6 @@
 package com.felix.occlient.network
 
+import com.felix.occlient.util.AnsiUtils
 import com.jcraft.jsch.ChannelShell
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.JSchException
@@ -57,10 +58,12 @@ class SshManager {
     fun appendLog(message: String) {
         val ts = "[${LocalTime.now().format(TIMESTAMP_FMT)}] "
         val regex = usernameRegex
+        // Strip ANSI/VT100 escape sequences before storing so the log is always readable.
+        val cleaned = AnsiUtils.strip(message)
         val masked = if (regex != null)
-            message.replace(regex, maskUsername(currentUsername))
+            cleaned.replace(regex, maskUsername(currentUsername))
         else
-            message
+            cleaned
         _logs.value = _logs.value + "$ts$masked"
     }
 
@@ -155,7 +158,9 @@ class SshManager {
                         val n = inputStream?.read(buffer, 0, minOf(available, buffer.size)) ?: -1
                         if (n > 0) {
                             val text = String(buffer, 0, n, Charsets.UTF_8)
-                            appendLog(text)
+                            // Prefix with direction arrow and raw byte count so the log shows
+                            // how much data arrived even when the content is mostly TUI sequences.
+                            appendLog("← ${n}b: $text")
                             onOutputReceived?.invoke(text)
                         }
                     } else {
@@ -182,7 +187,7 @@ class SshManager {
             val ps = PrintStream(out, true, Charsets.UTF_8)
             ps.println(command)
             out.flush()
-            appendLog("> $command")
+            appendLog("→ $command")
             Result.success(Unit)
         } catch (e: Exception) {
             val msg = "Send error: ${e.message}"

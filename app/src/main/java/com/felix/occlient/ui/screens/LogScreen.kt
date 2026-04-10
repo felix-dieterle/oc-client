@@ -18,9 +18,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.felix.occlient.network.SshManagerHolder
+import com.felix.occlient.ui.theme.TerminalAmber
 import com.felix.occlient.ui.theme.TerminalGreen
-import com.felix.occlient.util.AnsiUtils
 import kotlinx.coroutines.launch
+
+private enum class LogDirection { SENT, RECEIVED, SYSTEM }
+private data class DisplayEntry(val text: String, val direction: LogDirection)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,16 +34,26 @@ fun LogScreen(onNavigateBack: () -> Unit) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
-    // Strip ANSI/VT100 escape sequences for display so the log is human-readable.
-    // The clipboard action copies the same clean text so it is safe to share.
-    val displayLines = remember(logs) {
-        logs.flatMap { entry ->
-            AnsiUtils.strip(entry).lines()
-        }.filter { it.isNotBlank() }
+    // Entries are stored pre-cleaned (ANSI stripped) in SshManager.  Keep each entry as a
+    // whole unit so direction prefixes (→ / ←) always stay with their content.
+    // Direction is resolved here once so the items lambda does no repeated string searches.
+    val displayEntries = remember(logs) {
+        logs.mapNotNull { entry ->
+            val trimmed = entry.trim()
+            if (trimmed.isBlank()) null
+            else {
+                val direction = when {
+                    trimmed.contains("] →") -> LogDirection.SENT
+                    trimmed.contains("] ←") -> LogDirection.RECEIVED
+                    else -> LogDirection.SYSTEM
+                }
+                DisplayEntry(trimmed, direction)
+            }
+        }
     }
 
-    LaunchedEffect(displayLines.size) {
-        if (displayLines.isNotEmpty()) listState.animateScrollToItem(displayLines.size - 1)
+    LaunchedEffect(displayEntries.size) {
+        if (displayEntries.isNotEmpty()) listState.animateScrollToItem(displayEntries.size - 1)
     }
 
     Scaffold(
@@ -55,7 +68,7 @@ fun LogScreen(onNavigateBack: () -> Unit) {
                 actions = {
                     IconButton(
                         onClick = {
-                            clipboardManager.setText(AnnotatedString(displayLines.joinToString("\n")))
+                            clipboardManager.setText(AnnotatedString(displayEntries.joinToString("\n") { it.text }))
                             scope.launch { snackbarHostState.showSnackbar("Logs copied to clipboard") }
                         }
                     ) {
@@ -76,7 +89,7 @@ fun LogScreen(onNavigateBack: () -> Unit) {
                 .padding(padding)
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            if (displayLines.isEmpty()) {
+            if (displayEntries.isEmpty()) {
                 Text(
                     "No logs yet",
                     modifier = Modifier.padding(16.dp),
@@ -89,12 +102,19 @@ fun LogScreen(onNavigateBack: () -> Unit) {
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(8.dp)
                 ) {
-                    items(displayLines) { line ->
+                    items(displayEntries) { entry ->
+                        // Color-code by direction: green for sent (→), amber for received (←),
+                        // muted for system/informational entries.
+                        val entryColor = when (entry.direction) {
+                            LogDirection.SENT -> TerminalGreen
+                            LogDirection.RECEIVED -> TerminalAmber
+                            LogDirection.SYSTEM -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
                         Text(
-                            text = line,
+                            text = entry.text,
                             fontFamily = FontFamily.Monospace,
                             fontSize = 12.sp,
-                            color = TerminalGreen,
+                            color = entryColor,
                             modifier = Modifier.padding(vertical = 1.dp)
                         )
                     }
