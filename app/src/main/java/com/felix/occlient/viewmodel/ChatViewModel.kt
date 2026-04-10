@@ -250,13 +250,24 @@ class ChatViewModel(
      * from all N frames concatenates the text from every intermediate state, producing garbled
      * output like "WhyWhy didWhy did the chicken…".
      *
-     * By finding the LAST occurrence of ESC[?25l we isolate the most recent (and most
-     * complete) render frame.  Stripping ANSI from just that frame recovers the final visible
-     * text cleanly.  Falls back to the full string if no hide-cursor marker is found.
+     * By finding the LAST render frame that contains visible text after ANSI stripping we
+     * recover the final screen state cleanly.  Some trailing frames (e.g. status-bar ticks,
+     * cursor repositioning, or cleanup sequences) have no printable characters at all; skipping
+     * those avoids returning an empty string when the actual response was in an earlier frame,
+     * which would otherwise leave the processing spinner stuck indefinitely.  Falls back to the
+     * full string if no hide-cursor marker is found.
      */
     private fun extractLatestScreen(raw: String): String {
-        val lastHideCursor = raw.lastIndexOf("\u001B[?25l")
-        return if (lastHideCursor >= 0) raw.substring(lastHideCursor) else raw
+        val hideCursor = "\u001B[?25l"
+        var searchPos = raw.length
+        while (searchPos > 0) {
+            val pos = raw.lastIndexOf(hideCursor, searchPos - 1)
+            if (pos < 0) break
+            val candidate = raw.substring(pos)
+            if (AnsiUtils.strip(candidate).isNotBlank()) return candidate
+            searchPos = pos
+        }
+        return raw
     }
 
     /**

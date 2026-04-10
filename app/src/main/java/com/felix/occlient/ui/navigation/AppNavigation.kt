@@ -2,6 +2,9 @@ package com.felix.occlient.ui.navigation
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -54,10 +57,12 @@ fun AppNavigation() {
             arguments = listOf(navArgument("sessionId") { type = NavType.StringType })
         ) { backStackEntry ->
             val sessionId = backStackEntry.arguments?.getString("sessionId") ?: return@composable
-            val viewModel = ChatViewModel(
-                sessionId = sessionId,
-                sessionRepository = app.sessionRepository,
-                settingsDataStore = app.settingsDataStore
+            val viewModel: ChatViewModel = viewModel(
+                factory = object : ViewModelProvider.Factory {
+                    @Suppress("UNCHECKED_CAST")
+                    override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                        ChatViewModel(sessionId, app.sessionRepository, app.settingsDataStore) as T
+                }
             )
             ChatScreen(
                 viewModel = viewModel,
