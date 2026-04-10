@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.StateFlow
 import java.io.InputStream
 import java.io.OutputStream
 import java.io.PrintStream
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 
 enum class SshConnectionState {
     DISCONNECTED, CONNECTING, CONNECTED, ERROR
@@ -27,6 +29,8 @@ class SshManager {
     companion object {
         /** Interval between polls when no SSH data is available, in milliseconds. */
         private const val SSH_READ_POLL_INTERVAL_MS = 50L
+
+        private val TIMESTAMP_FMT = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
     }
 
     private val _connectionState = MutableStateFlow(SshConnectionState.DISCONNECTED)
@@ -34,6 +38,11 @@ class SshManager {
 
     private val _logs = MutableStateFlow<List<String>>(emptyList())
     val logs: StateFlow<List<String>> = _logs
+
+    /** Username of the active connection, kept to mask it in log entries. */
+    private var currentUsername: String = ""
+    /** Pre-compiled regex for efficient word-boundary replacement of [currentUsername]. Null when no user is set. */
+    private var usernameRegex: Regex? = null
 
     private var jschSession: Session? = null
     private var shellChannel: ChannelShell? = null
@@ -46,10 +55,28 @@ class SshManager {
     var onOutputReceived: ((String) -> Unit)? = null
 
     fun appendLog(message: String) {
-        _logs.value = _logs.value + message
+        val ts = "[${LocalTime.now().format(TIMESTAMP_FMT)}] "
+        val regex = usernameRegex
+        val masked = if (regex != null)
+            message.replace(regex, maskUsername(currentUsername))
+        else
+            message
+        _logs.value = _logs.value + "$ts$masked"
+    }
+
+    /** Returns a masked representation that hides username length, e.g. "john" → "j***", "a" → "***". */
+    private fun maskUsername(username: String): String = when {
+        username.isEmpty() -> ""
+        username.length == 1 -> "***"
+        else -> "${username.first()}***"
     }
 
     suspend fun connect(config: SshConfig): Result<Unit> = withContext(Dispatchers.IO) {
+        currentUsername = config.username
+        usernameRegex = if (config.username.isNotBlank())
+            Regex("\\b${Regex.escape(config.username)}\\b")
+        else
+            null
         _connectionState.value = SshConnectionState.CONNECTING
         appendLog("Connecting to ${config.host}:${config.port} as ${config.username}...")
         val usingKey = config.privateKey.isNotBlank()
@@ -172,6 +199,8 @@ class SshManager {
         jschSession = null
         outputStream = null
         inputStream = null
+        currentUsername = ""
+        usernameRegex = null
         _connectionState.value = SshConnectionState.DISCONNECTED
         appendLog("Disconnected")
     }
