@@ -7,9 +7,11 @@ import com.felix.occlient.data.repository.SessionRepository
 import com.felix.occlient.network.SshConfig
 import com.felix.occlient.network.SshConnectionState
 import com.felix.occlient.network.SshManagerHolder
+import com.felix.occlient.util.AnsiUtils
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * USER      – message sent by the user (right-aligned green bubble).
@@ -44,6 +46,10 @@ class ChatViewModel(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    /** True while opencode is expected to be computing a response. */
+    private val _isProcessing = MutableStateFlow(false)
+    val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
+
     companion object {
         /** Delay before sending the opencode-cli command, allowing the SSH shell to fully initialise. */
         private const val OPENCODE_STARTUP_DELAY_MS = 1000L
@@ -69,10 +75,23 @@ class ChatViewModel(
 
     private var isFirstConnect = true
 
+    /**
+     * Set to true just before sending `opencode-cli` so that the first batch of raw SSH output
+     * received afterwards (typically opencode's TUI drawing sequences) triggers a SYSTEM
+     * acknowledgement message instead of silently disappearing.  Cleared atomically on first use.
+     */
+    private val awaitingOpenCodeAck = AtomicBoolean(false)
+
     init {
         viewModelScope.launch {
             sessionRepository.getSessionById(sessionId)?.let {
                 _sessionName.value = it.name
+            }
+        }
+        // Clear the processing indicator if the connection is lost so the spinner never gets stuck.
+        viewModelScope.launch {
+            connectionState.collect { state ->
+                if (state != SshConnectionState.CONNECTED) _isProcessing.value = false
             }
         }
         sshManager.onOutputReceived = { text ->
@@ -104,6 +123,9 @@ class ChatViewModel(
                     kotlinx.coroutines.delay(OPENCODE_STARTUP_DELAY_MS)
                     // Track the startup command so its terminal echo is suppressed.
                     pendingEchoCommands.merge("opencode-cli", 1, Int::plus)
+                    // Arm the acknowledgement flag before writing to the stream so that the
+                    // very first incoming bytes (opencode's TUI drawing sequences) are noticed.
+                    awaitingOpenCodeAck.set(true)
                     sshManager.sendCommand("opencode-cli")
                 }
             } else {
@@ -126,6 +148,7 @@ class ChatViewModel(
             if (result.isFailure) {
                 addMessage("Failed to send: ${result.exceptionOrNull()?.message}", MessageType.ERROR)
             } else {
+                _isProcessing.value = true
                 sessionRepository.incrementMessageCount(sessionId)
             }
         }
@@ -133,16 +156,19 @@ class ChatViewModel(
 
     /**
      * Processes raw SSH output:
-     * 1. Strips ANSI escape sequences and carriage returns.
+     * 1. Strips ANSI/VT100 escape sequences and carriage returns.
      * 2. Filters terminal echoes of commands we sent (the PTY echoes typed input).
      * 3. Filters lines that are solely a shell prompt (noise with no AI content).
      * 4. Classifies remaining lines as ASSISTANT responses.
+     * 5. If this is the first batch of output after launching opencode-cli and everything was
+     *    filtered (i.e. the TUI startup drawing was silently discarded), emits a SYSTEM
+     *    acknowledgement so the user knows opencode is actually running.
      */
     private fun processOutput(text: String) {
-        val withoutAnsi = text
-            .replace(Regex("\u001B\\[[;\\d]*[A-Za-z]"), "")
-            .replace(Regex("\u001B\\][^\u0007]*\u0007"), "")
-            .replace(Regex("\r"), "")
+        // Capture and clear the ack flag atomically so exactly one message is shown.
+        val isFirstAck = awaitingOpenCodeAck.getAndSet(false)
+
+        val withoutAnsi = AnsiUtils.strip(text)
 
         val filteredLines = withoutAnsi.split("\n").filter { rawLine ->
             val line = rawLine.trim()
@@ -171,8 +197,15 @@ class ChatViewModel(
 
         val result = filteredLines.joinToString("\n").trim()
         if (result.isNotBlank()) {
+            _isProcessing.value = false
             viewModelScope.launch {
                 addMessage(result, MessageType.ASSISTANT)
+            }
+        } else if (isFirstAck) {
+            // Raw output arrived (opencode's TUI drawing sequences) but everything was
+            // filtered.  Show a SYSTEM message so the user knows opencode is alive.
+            viewModelScope.launch {
+                addMessage("opencode is running. Type your prompt below.", MessageType.SYSTEM)
             }
         }
     }

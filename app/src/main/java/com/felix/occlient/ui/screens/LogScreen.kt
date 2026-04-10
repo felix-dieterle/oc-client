@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.felix.occlient.network.SshManagerHolder
 import com.felix.occlient.ui.theme.TerminalGreen
+import com.felix.occlient.util.AnsiUtils
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -30,8 +31,16 @@ fun LogScreen(onNavigateBack: () -> Unit) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(logs.size) {
-        if (logs.isNotEmpty()) listState.animateScrollToItem(logs.size - 1)
+    // Strip ANSI/VT100 escape sequences for display so the log is human-readable.
+    // The clipboard action still copies the raw bytes for debugging.
+    val displayLines = remember(logs) {
+        logs.flatMap { entry ->
+            AnsiUtils.strip(entry).lines()
+        }.filter { it.isNotBlank() }
+    }
+
+    LaunchedEffect(displayLines.size) {
+        if (displayLines.isNotEmpty()) listState.animateScrollToItem(displayLines.size - 1)
     }
 
     Scaffold(
@@ -67,7 +76,7 @@ fun LogScreen(onNavigateBack: () -> Unit) {
                 .padding(padding)
                 .background(MaterialTheme.colorScheme.background)
         ) {
-            if (logs.isEmpty()) {
+            if (displayLines.isEmpty()) {
                 Text(
                     "No logs yet",
                     modifier = Modifier.padding(16.dp),
@@ -80,7 +89,7 @@ fun LogScreen(onNavigateBack: () -> Unit) {
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(8.dp)
                 ) {
-                    items(logs.flatMap { it.lines() }.filter { it.isNotBlank() }) { line ->
+                    items(displayLines) { line ->
                         Text(
                             text = line,
                             fontFamily = FontFamily.Monospace,
