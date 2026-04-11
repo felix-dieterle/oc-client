@@ -7,7 +7,6 @@ import com.felix.occlient.data.repository.SessionRepository
 import com.felix.occlient.network.SshConfig
 import com.felix.occlient.network.SshConnectionState
 import com.felix.occlient.network.SshManagerHolder
-import com.felix.occlient.util.AnsiUtils
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -64,16 +63,6 @@ class ChatViewModel(
          * for this many milliseconds and then process the latest snapshot.
          */
         private const val OUTPUT_DEBOUNCE_MS = 500L
-
-        // Windows cmd/PowerShell: optional "PS " prefix, optional "user@host " prefix, then drive:\path>
-        private val WINDOWS_SHELL_PROMPT_REGEX = Regex(
-            """^(?:PS )?(?:[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+ )?[A-Za-z]:\\[^\n]*>\s*$"""
-        )
-        // Linux/macOS bash/zsh: user@host:/path$ or user@host:/path#
-        // Note: ${'$'} is used instead of a bare $ to prevent Kotlin string interpolation.
-        private val UNIX_SHELL_PROMPT_REGEX = Regex(
-            """^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:[^\n]*[#${'$'}]\s*$"""
-        )
     }
 
     /**
@@ -108,6 +97,7 @@ class ChatViewModel(
 
     /** Debounce job for [processOutput]. Cancelled and restarted on each incoming batch. */
     private var outputDebounceJob: Job? = null
+    private var protocolDebugLogsEnabled: Boolean = false
 
     /**
      * ID of the ASSISTANT message for the current conversation turn.  Rather than appending a
@@ -157,7 +147,11 @@ class ChatViewModel(
             )
             val result = sshManager.connect(config)
             if (result.isSuccess) {
+                protocolDebugLogsEnabled = settings.protocolDebugLogs
                 addMessage("Connected! Starting opencode-cli...", MessageType.SYSTEM)
+                if (protocolDebugLogsEnabled) {
+                    sshManager.appendLog("[PROTO] debug trace enabled")
+                }
                 if (isFirstConnect) {
                     isFirstConnect = false
                     kotlinx.coroutines.delay(OPENCODE_STARTUP_DELAY_MS)
@@ -241,36 +235,6 @@ class ChatViewModel(
     }
 
     /**
-     * Extracts just the latest full-screen render from the accumulated raw SSH bytes.
-     *
-     * opencode-cli is built with Bubbletea, which hides the cursor at the very start of every
-     * render frame (ESC[?25l) to suppress cursor flicker and shows it again at the end
-     * (ESC[?25h).  When an AI response is streamed, opencode redraws the entire TUI on every
-     * token, so [pendingOutput] accumulates N complete render frames.  Naively stripping ANSI
-     * from all N frames concatenates the text from every intermediate state, producing garbled
-     * output like "WhyWhy didWhy did the chicken…".
-     *
-     * By finding the LAST render frame that contains visible text after ANSI stripping we
-     * recover the final screen state cleanly.  Some trailing frames (e.g. status-bar ticks,
-     * cursor repositioning, or cleanup sequences) have no printable characters at all; skipping
-     * those avoids returning an empty string when the actual response was in an earlier frame,
-     * which would otherwise leave the processing spinner stuck indefinitely.  Falls back to the
-     * full string if no hide-cursor marker is found.
-     */
-    private fun extractLatestScreen(raw: String): String {
-        val hideCursor = "\u001B[?25l"
-        var searchPos = raw.length
-        while (searchPos > 0) {
-            val pos = raw.lastIndexOf(hideCursor, searchPos - 1)
-            if (pos < 0) break
-            val candidate = raw.substring(pos)
-            if (AnsiUtils.strip(candidate).isNotBlank()) return candidate
-            searchPos = pos
-        }
-        return raw
-    }
-
-    /**
      * Processes a raw SSH snapshot after the debounce window has elapsed:
      * 1. Extracts the latest full-screen render to avoid processing intermediate streaming states.
      * 2. Strips ANSI/VT100 escape sequences and carriage returns.
@@ -282,39 +246,16 @@ class ChatViewModel(
      * Must be called on the main thread (via viewModelScope).
      */
     private fun flushOutput(text: String) {
-        val withoutAnsi = AnsiUtils.strip(extractLatestScreen(text))
-
-        var sawShellPrompt = false
-        val filteredLines = withoutAnsi.split("\n").filter { rawLine ->
-            val line = rawLine.trim()
-            if (line.isEmpty()) return@filter false
-
-            // Check whether this line is the terminal echo of a sent command.
-            val echoedCmd: String? = pendingEchoCommands[line]
-                ?.let { line }
-                ?: pendingEchoCommands.keys.asSequence().firstOrNull { cmd ->
-                    matchesShellPromptEcho(line, cmd)
-                }
-            if (echoedCmd != null) {
-                pendingEchoCommands.compute(echoedCmd) { _, count ->
-                    if (count == null || count <= 1) null else count - 1
-                }
-                return@filter false
-            }
-
-            if (isShellPromptLine(line)) {
-                sawShellPrompt = true
-                return@filter false
-            }
-
-            true
+        val parseResult = OpencodeProtocol.parseAssistantOutput(text, pendingEchoCommands)
+        if (protocolDebugLogsEnabled) {
+            logProtocolTrace(text, parseResult)
         }
 
-        if (sawShellPrompt && _isProcessing.value) {
+        if (parseResult.sawShellPrompt && _isProcessing.value) {
             _isProcessing.value = false
         }
 
-        val result = filteredLines.joinToString("\n").trim()
+        val result = parseResult.assistantText
 
         if (result.isNotBlank()) {
             _isProcessing.value = false
@@ -342,19 +283,32 @@ class ChatViewModel(
         }
     }
 
-    private fun isShellPromptLine(line: String): Boolean =
-        WINDOWS_SHELL_PROMPT_REGEX.matches(line) || UNIX_SHELL_PROMPT_REGEX.matches(line)
+    private fun logProtocolTrace(raw: String, parseResult: ProtocolParseResult) {
+        fun short(s: String): String {
+            val singleLine = s.replace("\n", "\\n")
+            return if (singleLine.length <= 120) singleLine else singleLine.take(120) + "..."
+        }
 
-    /**
-     * Returns true when [line] is a shell-prompt-prefixed echo of [cmd]
-     * (e.g. `user@host C:\path>cmd` on Windows or `user@host:~/path$ cmd` on Unix).
-     */
-    private fun matchesShellPromptEcho(line: String, cmd: String): Boolean =
-        // Windows cmd/PowerShell: prompt ends with ">"
-        line.endsWith(">$cmd") || line.endsWith("> $cmd") ||
-        // Unix bash/zsh: prompt ends with "$" or "#"
-        line.endsWith("\$$cmd") || line.endsWith("\$ $cmd") ||
-        line.endsWith("#$cmd") || line.endsWith("# $cmd")
+        val assistantPreview = if (parseResult.assistantText.isBlank()) "<empty>" else short(parseResult.assistantText)
+        val echoPreview = if (parseResult.droppedEchoLines.isEmpty()) "[]"
+        else parseResult.droppedEchoLines.take(3).joinToString(prefix = "[", postfix = "]") { "\"${short(it)}\"" }
+        val promptPreview = if (parseResult.droppedPromptLines.isEmpty()) "[]"
+        else parseResult.droppedPromptLines.take(3).joinToString(prefix = "[", postfix = "]") { "\"${short(it)}\"" }
+
+        sshManager.appendLog(
+            "[PROTO] rawLen=${raw.length} extractedLen=${parseResult.extractedScreenLength} " +
+                "lines=${parseResult.consideredLineCount} echoDropped=${parseResult.droppedEchoLines.size} " +
+                "promptDropped=${parseResult.droppedPromptLines.size} sawPrompt=${parseResult.sawShellPrompt} " +
+                "assistant='${assistantPreview}'"
+        )
+
+        if (parseResult.droppedEchoLines.isNotEmpty()) {
+            sshManager.appendLog("[PROTO] droppedEchoSample=$echoPreview")
+        }
+        if (parseResult.droppedPromptLines.isNotEmpty()) {
+            sshManager.appendLog("[PROTO] droppedPromptSample=$promptPreview")
+        }
+    }
 
     private fun addMessage(content: String, type: MessageType) {
         _messages.value = _messages.value + ChatMessage(content = content, type = type)

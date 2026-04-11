@@ -18,9 +18,25 @@ class SettingsViewModel(private val dataStore: SettingsDataStore) : ViewModel() 
     private val _saved = MutableStateFlow(false)
     val saved: StateFlow<Boolean> = _saved.asStateFlow()
 
-    fun saveSettings(host: String, port: Int, username: String, password: String, privateKey: String) {
+    fun saveSettings(
+        host: String,
+        port: Int,
+        username: String,
+        password: String,
+        privateKey: String,
+        protocolDebugLogs: Boolean
+    ) {
         viewModelScope.launch {
-            dataStore.saveSettings(SshSettings(host, port, username, password, privateKey))
+            dataStore.saveSettings(
+                SshSettings(
+                    host = host,
+                    port = port,
+                    username = username,
+                    password = password,
+                    privateKey = privateKey,
+                    protocolDebugLogs = protocolDebugLogs
+                )
+            )
             _saved.value = true
         }
     }

@@ -81,5 +81,7 @@ dependencies {
     implementation(libs.bouncycastle.provider)
     implementation(libs.bouncycastle.pkix)
     implementation(libs.kotlinx.coroutines.android)
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     debugImplementation(libs.androidx.ui.tooling)
 }

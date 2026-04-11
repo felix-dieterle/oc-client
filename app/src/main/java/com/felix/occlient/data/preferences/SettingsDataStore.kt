@@ -14,7 +14,8 @@ data class SshSettings(
     val port: Int = 22,
     val username: String = "",
     val password: String = "",
-    val privateKey: String = ""
+    val privateKey: String = "",
+    val protocolDebugLogs: Boolean = false
 )
 
 class SettingsDataStore(private val context: Context) {
@@ -24,6 +25,7 @@ class SettingsDataStore(private val context: Context) {
         val SSH_USER = stringPreferencesKey("ssh_user")
         val SSH_PASSWORD = stringPreferencesKey("ssh_password")
         val SSH_PRIVATE_KEY = stringPreferencesKey("ssh_private_key")
+        val PROTOCOL_DEBUG_LOGS = booleanPreferencesKey("protocol_debug_logs")
     }
 
     val settingsFlow: Flow<SshSettings> = context.dataStore.data.map { prefs ->
@@ -32,7 +34,8 @@ class SettingsDataStore(private val context: Context) {
             port = prefs[Keys.SSH_PORT] ?: 22,
             username = prefs[Keys.SSH_USER] ?: "",
             password = prefs[Keys.SSH_PASSWORD] ?: "",
-            privateKey = prefs[Keys.SSH_PRIVATE_KEY] ?: ""
+            privateKey = prefs[Keys.SSH_PRIVATE_KEY] ?: "",
+            protocolDebugLogs = prefs[Keys.PROTOCOL_DEBUG_LOGS] ?: false
         )
     }
 
@@ -43,6 +46,7 @@ class SettingsDataStore(private val context: Context) {
             prefs[Keys.SSH_USER] = settings.username
             prefs[Keys.SSH_PASSWORD] = settings.password
             prefs[Keys.SSH_PRIVATE_KEY] = settings.privateKey
+            prefs[Keys.PROTOCOL_DEBUG_LOGS] = settings.protocolDebugLogs
         }
     }
 }

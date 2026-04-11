@@ -36,6 +36,7 @@ fun SettingsScreen(
     var username by remember(settings.username) { mutableStateOf(settings.username) }
     var password by remember(settings.password) { mutableStateOf(settings.password) }
     var privateKey by remember(settings.privateKey) { mutableStateOf(settings.privateKey) }
+    var protocolDebugLogs by remember(settings.protocolDebugLogs) { mutableStateOf(settings.protocolDebugLogs) }
     var showKey by remember { mutableStateOf(false) }
     var showPassword by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -162,6 +163,20 @@ fun SettingsScreen(
                 }
             }
 
+            HorizontalDivider()
+            Text("Debug", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Protocol trace logs")
+                Switch(
+                    checked = protocolDebugLogs,
+                    onCheckedChange = { protocolDebugLogs = it }
+                )
+            }
+
             Button(
                 onClick = {
                     viewModel.saveSettings(
@@ -169,7 +184,8 @@ fun SettingsScreen(
                         port = port.toIntOrNull() ?: 22,
                         username = username.trim(),
                         password = password,
-                        privateKey = privateKey.trim()
+                        privateKey = privateKey.trim(),
+                        protocolDebugLogs = protocolDebugLogs
                     )
                 },
                 modifier = Modifier.fillMaxWidth()
