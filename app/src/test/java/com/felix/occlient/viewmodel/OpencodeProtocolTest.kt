@@ -23,6 +23,17 @@ class OpencodeProtocolTest {
     }
 
     @Test
+    fun parseAssistantOutput_fallsBackToPreviousFrame_whenLatestFrameOnlyContainsPrompt() {
+        val frameWithAnswer = "\u001B[?25lDie Antwort ist 4.\u001B[?25h"
+        val latestPromptOnlyFrame = "\u001B[?25l@felix-user ➜ /workspace/app $\u001B[?25h"
+        val raw = frameWithAnswer + latestPromptOnlyFrame
+
+        val result = OpencodeProtocol.parseAssistantOutput(raw, mutableMapOf())
+
+        assertEquals("Die Antwort ist 4.", result.assistantText)
+    }
+
+    @Test
     fun parseAssistantOutput_filtersExactEcho_andConsumesPendingEntry() {
         val pending = mutableMapOf("erste frage" to 1)
         val raw = "erste frage\nDie Antwort ist da.\n"
@@ -66,5 +77,16 @@ class OpencodeProtocolTest {
         assertTrue(result.sawShellPrompt)
         assertEquals("", result.assistantText)
         assertEquals(listOf("user@host:/srv/app$"), result.droppedPromptLines)
+    }
+
+    @Test
+    fun parseAssistantOutput_detectsShellPromptAndRemovesPromptLine_codespaceStyle() {
+        val raw = "@felix-user ➜ /workspaces/oc-client (feature/x) $\n"
+
+        val result = OpencodeProtocol.parseAssistantOutput(raw, mutableMapOf())
+
+        assertTrue(result.sawShellPrompt)
+        assertEquals("", result.assistantText)
+        assertEquals(listOf("@felix-user ➜ /workspaces/oc-client (feature/x) $"), result.droppedPromptLines)
     }
 }

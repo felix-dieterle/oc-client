@@ -1,88 +1,77 @@
-# Protocol Analysis: First Response Hang on Windows Host
+# Protocol Analysis: First Response and Prompt Handling
 
-## Summary
-**Root Cause**: Shell prompt arrives without AI response frame, gets filtered, leaves empty chat bubble.
+## Status (2026-04-11)
+Die Hauptursache fuer den First-Response-Haenger wurde reproduzierbar nachgestellt und parserseitig adressiert.
 
-## Live Test Results
+Umgesetzt:
+- `OpencodeProtocol` erkennt jetzt auch Codespaces-/Arrow-Prompts.
+- Parsing faellt auf einen vorherigen sinnvollen Bubbletea-Frame zurueck, wenn der neueste Frame nach Filterung leer ist (nur Prompt/Echo).
+- Zusatzt tests fuer Codespace-Prompt und Frame-Fallback.
+- Voller SSH-Roundtrip-Harness mit Mock-CLI im `scripts`-Ordner.
 
-### Test 1: Windows Shell Prompt Only (CRITICAL)
-```
-Input:  PS C:\Users\felix\workspace>
-Output: ""
-Status: ✗ FAIL – Chat shows nothing, spinner stuck waiting
-```
-**Why it fails**: 
-- opencode-cli sends shell prompt BEFORE AI response streaming
-- Prompt is correctly filtered (not an error)
-- `assistantText` becomes empty
-- `flushOutput()` skips empty content: `if (result.isNotBlank())`
-- Chat bubble is never created
-- When AI response arrives later, it may be lost
+## Root Cause (urspruenglich)
+1. Shell-Prompt kann vor dem eigentlichen AI-Text kommen.
+2. Prompt wird korrekt gefiltert.
+3. Ergebnis wird dadurch teilweise leer.
+4. Mit `if (result.isNotBlank())` wird in dem Flush kein Assistant-Update angelegt.
 
-### Test 2: Unix TUI Frames (Works Fine)
-```
-Input:  Deine frage: Hallo\n\nAI sagt: Hallo zurück!
-Output: "Deine frage: Hallo\n\nAI sagt: Hallo zurück!"
-Status: ✓ PASS – Chat displays response correctly
-```
-**Why it works**: AI streaming begins immediately after echo.
+## Was gefixt wurde
 
-### Test 3-5: Protocol Parsing (All ✓ PASS)
-- Echo filtering works correctly
-- Multi-frame streaming handles correctly  
-- Empty trailing frames don't cause content loss
+### 1) Prompt-Erkennung erweitert
+- Datei: `app/src/main/java/com/felix/occlient/viewmodel/OpencodeProtocol.kt`
+- Neu: Regex fuer Codespace-/Arrow-Prompts (`@user ➜ ... $`)
 
-## Root Cause Chain
-1. Windows opencode-cli sends shell prompt `PS C:\...>` first
-2. Protocol parser correctly identifies it as shell prompt (Linux regex matches)
-3. Prompt is filtered (desired behavior, not an error)
-4. Remaining text after filter = empty string
-5. `flushOutput()` has guard: `if (result.isNotBlank())` → skips empty updates
-6. No message created → app spinner waits indefinitely
-7. When AI response arrives in next debounce window, it updates existing message
-8. But there's no existing message ID yet → behavior undefined
+### 2) Robustere Frame-Auswahl
+- Datei: `app/src/main/java/com/felix/occlient/viewmodel/OpencodeProtocol.kt`
+- Vorher: nur „letzter brauchbarer Frame“.
+- Jetzt: mehrere Kandidaten; bevorzugt wird der erste mit nicht-leerem Assistant-Text.
+- Effekt: trailing prompt-only Frames loeschen nicht mehr die sichtbare Antwort.
 
-## Code Location
-- **Filter logic**: [OpencodeProtocol.kt](app/src/main/java/com/felix/occlient/viewmodel/OpencodeProtocol.kt)
-- **Guard condition**: [ChatViewModel.kt line 283](app/src/main/java/com/felix/occlient/viewmodel/ChatViewModel.kt#L283)
-  ```kotlin
-  if (result.isNotBlank()) {
-      // ... create/update message ...
-  }
-  ```
+### 3) Tests erweitert
+- Datei: `app/src/test/java/com/felix/occlient/viewmodel/OpencodeProtocolTest.kt`
+- Neu:
+  - Fallback auf vorherigen Frame bei prompt-only latest frame
+  - Codespace-Prompt-Erkennung
 
-## Solution Options (Priority Order)
+## End-to-End Test Setup
+- `scripts/mock-opencode-cli.py`: Mock fuer Bubbletea-Output, liest Prompt ueber PTY stdin.
+- `scripts/roundtrip-test.py`: Simuliert SSH-Flow wie in der App (PTY, Debounce, Echo-/Prompt-Filter).
 
-### Option 1: Keep Spinner State Without Message
-- When shell prompt alone arrives, don't create chat bubble
-- Keep `_isProcessing = true` (spinner keeps running)
-- Let next non-empty frame create the message
-- **Pros**: Simple, preserves current display logic
-- **Cons**: UI shows spinner with nothing below it (confusing)
+Zuletzt beobachteter Lauf:
+- `normal`: PASS
+- `windows`: PASS
 
-### Option 2: Show "Thinking..." Placeholder
-- When `sawShellPrompt && _isProcessing`, show placeholder message
-- Replace placeholder when real content arrives
-- **Pros**: User sees activity is happening
-- **Cons**: More code, requires message updates
+## Offene Punkte / geplanter Fix-Plan
 
-### Option 3: Increase Debounce Before Filtering
-- Wait longer before processing output (current: 500ms)
-- Let multiple frames accumulate (prompt + response)
-- Filter together instead of separately
-- **Pros**: Avoids empty filtering entirely
-- **Cons**: Higher latency, may lose incremental streaming
+### P1: Ausgabebereinigung der Assistant-Bubble
+Problem:
+- Die Bubble enthaelt noch Teile von TUI-Header/Prompt (`opencode v1.0`, Trenner, `> ...`).
 
-### Option 4: Better Frame Sequencing
-- Detect when prompt arrives without response
-- Hold off message creation until non-empty content
-- Set a backstop timeout (e.g., 2s of empty + prompt = error)
-- **Pros**: Most robust, handles edge cases
-- **Cons**: Complex logic
+Plan:
+1. In `OpencodeProtocol.parseCandidate` sichtbare UI-Zeilen gezielt filtern.
+2. Muster fuer statische TUI-Header und Prompt-Zeilen als klar getrennte Regeln.
+3. Unit-Tests fuer „nur Antworttext bleibt“.
 
-## Recommendation
-**Implement Option 2** (Show "Thinking..." Placeholder):
-- Balances immediacy with clarity
-- Prevents UI from appearing stuck
-- Natural progression: "Thinking..." → actual response
-- Already have infrastructure (`_isProcessing` flag)
+### P2: Startup-Frames nicht als echte Assistant-Antwort darstellen
+Problem:
+- Fruehe „Initializing/Thinking“-Frames koennen als Assistant-Nachricht erscheinen.
+
+Plan:
+1. Guard in `ChatViewModel`: Antwortbubble erst nach validem Antwortinhalt oder bestehender Assistant-ID.
+2. Optional Placeholder-Strategie (`Thinking...`) nur bei aktiver Verarbeitung.
+3. UI-Verhalten per Instrumented/VM-Test absichern.
+
+### P3: Build-/Test-Umgebung stabilisieren
+Problem:
+- Lokaler Gradle-Testlauf scheitert in dieser Umgebung mit Java-25-Thema.
+
+Plan:
+1. Java 21 fuer Gradle festlegen.
+2. Android SDK-Pfad sauber in CI/Devcontainer setzen.
+3. `:app:testDebugUnitTest` in CI verpflichtend fuer Parser-Tests.
+
+## Relevante Dateien
+- `app/src/main/java/com/felix/occlient/viewmodel/OpencodeProtocol.kt`
+- `app/src/test/java/com/felix/occlient/viewmodel/OpencodeProtocolTest.kt`
+- `scripts/mock-opencode-cli.py`
+- `scripts/roundtrip-test.py`

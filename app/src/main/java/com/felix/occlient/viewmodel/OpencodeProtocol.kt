@@ -23,9 +23,16 @@ internal object OpencodeProtocol {
         """^(?:PS )?(?:[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+ )?[A-Za-z]:\\[^\n]*>\s*$"""
     )
 
-    // Linux/macOS bash/zsh: user@host:/path$ or user@host:/path#
+    // Linux/macOS bash/zsh standard format: user@host:/path$ or user@host:/path#
     private val UNIX_SHELL_PROMPT_REGEX = Regex(
         """^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:[^\n]*[#${'$'}]\s*$"""
+    )
+
+    // Non-standard prompts: GitHub Codespaces (@user ➜ path (branch) $),
+    // oh-my-zsh with arrow, Starship, fish, etc.
+    // Identifies: @user prefix + prompt arrow (➜ → ❯) + path + ending $ or #
+    private val CODESPACE_PROMPT_REGEX = Regex(
+        """^@[A-Za-z0-9_.-]+\s+[➜→❯][^\n]*[#${'$'}]\s*$"""
     )
 
     /**
@@ -36,8 +43,20 @@ internal object OpencodeProtocol {
         raw: String,
         pendingEchoCommands: MutableMap<String, Int>
     ): ProtocolParseResult {
-        val extracted = extractLatestScreen(raw)
-        val withoutAnsi = AnsiUtils.strip(extracted)
+        val candidates = extractScreenCandidates(raw)
+        val selected = candidates.firstOrNull { candidate ->
+            val probe = parseCandidate(candidate, pendingEchoCommands.toMutableMap())
+            probe.assistantText.isNotBlank()
+        } ?: candidates.firstOrNull() ?: raw
+
+        return parseCandidate(selected, pendingEchoCommands)
+    }
+
+    private fun parseCandidate(
+        snapshot: String,
+        pendingEchoCommands: MutableMap<String, Int>
+    ): ProtocolParseResult {
+        val withoutAnsi = AnsiUtils.strip(snapshot)
 
         var sawShellPrompt = false
         val droppedEchoLines = mutableListOf<String>()
@@ -75,7 +94,7 @@ internal object OpencodeProtocol {
             consideredLineCount = lines.size,
             droppedEchoLines = droppedEchoLines,
             droppedPromptLines = droppedPromptLines,
-            extractedScreenLength = extracted.length
+            extractedScreenLength = snapshot.length
         )
     }
 
@@ -84,20 +103,32 @@ internal object OpencodeProtocol {
      * Falls back to previous non-empty frames to avoid dropping valid content.
      */
     fun extractLatestScreen(raw: String): String {
+        return extractScreenCandidates(raw).firstOrNull() ?: raw
+    }
+
+    private fun extractScreenCandidates(raw: String): List<String> {
         val hideCursor = "\u001B[?25l"
+        val candidates = mutableListOf<String>()
         var searchPos = raw.length
         while (searchPos > 0) {
             val pos = raw.lastIndexOf(hideCursor, searchPos - 1)
             if (pos < 0) break
             val candidate = raw.substring(pos)
-            if (AnsiUtils.strip(candidate).isNotBlank()) return candidate
+            if (AnsiUtils.strip(candidate).isNotBlank()) {
+                candidates += candidate
+            }
             searchPos = pos
         }
-        return raw
+        if (candidates.isEmpty()) {
+            candidates += raw
+        }
+        return candidates
     }
 
     fun isShellPromptLine(line: String): Boolean =
-        WINDOWS_SHELL_PROMPT_REGEX.matches(line) || UNIX_SHELL_PROMPT_REGEX.matches(line)
+        WINDOWS_SHELL_PROMPT_REGEX.matches(line) ||
+            UNIX_SHELL_PROMPT_REGEX.matches(line) ||
+            CODESPACE_PROMPT_REGEX.matches(line)
 
     /**
      * True when [line] is a prompt-prefixed echo of [cmd].
