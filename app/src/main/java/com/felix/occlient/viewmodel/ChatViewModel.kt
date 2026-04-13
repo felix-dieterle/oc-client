@@ -156,11 +156,11 @@ class ChatViewModel(
                     isFirstConnect = false
                     kotlinx.coroutines.delay(OPENCODE_STARTUP_DELAY_MS)
                     // Track the startup command so its terminal echo is suppressed.
-                    pendingEchoCommands.merge("opencode-cli", 1, Int::plus)
+                    pendingEchoCommands.merge("opencode-cli run", 1, Int::plus)
                     // Arm the acknowledgement flag before writing to the stream so that the
                     // very first incoming bytes (opencode's TUI drawing sequences) are noticed.
                     awaitingOpenCodeAck.set(true)
-                    sshManager.sendCommand("opencode-cli")
+                    sshManager.sendCommand("opencode-cli run")
                     addMessage("opencode-cli launched. Waiting for response…", MessageType.SYSTEM)
                 }
             } else {
@@ -180,8 +180,8 @@ class ChatViewModel(
             currentAssistantMsgId = null
             addMessage(text, MessageType.USER)
             // Track the prompt so its terminal echo is suppressed in processOutput.
-            pendingEchoCommands.merge(text.trim(), 1, Int::plus)
-            val result = sshManager.sendCommand(text)
+            pendingEchoCommands.merge("opencode-cli run", 1, Int::plus)
+            val result = sshManager.sendCommand("opencode-cli run \"$text\"")
             if (result.isFailure) {
                 addMessage("Failed to send: ${result.exceptionOrNull()?.message}", MessageType.ERROR)
             } else {
