@@ -2,6 +2,7 @@ package com.felix.occlient.data.repository
 
 import com.felix.occlient.data.database.SessionDao
 import com.felix.occlient.data.model.Session
+import com.felix.occlient.data.model.SessionType
 import kotlinx.coroutines.flow.Flow
 
 class SessionRepository(private val sessionDao: SessionDao) {
@@ -9,8 +10,8 @@ class SessionRepository(private val sessionDao: SessionDao) {
 
     suspend fun getSessionById(id: String): Session? = sessionDao.getSessionById(id)
 
-    suspend fun createSession(name: String): Session {
-        val session = Session(name = name)
+    suspend fun createSession(name: String, sessionType: SessionType = SessionType.RUN): Session {
+        val session = Session(name = name, sessionType = sessionType)
         sessionDao.insertSession(session)
         return session
     }

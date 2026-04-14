@@ -11,6 +11,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -18,6 +19,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.felix.occlient.viewmodel.ConnectionTestResult
 import com.felix.occlient.viewmodel.SettingsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -31,6 +33,7 @@ fun SettingsScreen(
 ) {
     val settings by viewModel.settings.collectAsState()
     val saved by viewModel.saved.collectAsState()
+    val testResult by viewModel.connectionTestResult.collectAsState()
     var host by remember(settings.host) { mutableStateOf(settings.host) }
     var port by remember(settings.port) { mutableStateOf(settings.port.toString()) }
     var username by remember(settings.username) { mutableStateOf(settings.username) }
@@ -177,6 +180,35 @@ fun SettingsScreen(
                 )
             }
 
+            HorizontalDivider()
+
+            // Test Connection button
+            val isTesting = testResult == ConnectionTestResult.Testing
+            OutlinedButton(
+                onClick = {
+                    viewModel.testConnection(
+                        host = host.trim(),
+                        port = port.toIntOrNull() ?: 22,
+                        username = username.trim(),
+                        password = password,
+                        privateKey = privateKey.trim()
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isTesting && host.isNotBlank()
+            ) {
+                if (isTesting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Testing…")
+                } else {
+                    Text("Test SSH Connection")
+                }
+            }
+
             Button(
                 onClick = {
                     viewModel.saveSettings(
@@ -192,6 +224,55 @@ fun SettingsScreen(
             ) {
                 Text("Save Settings")
             }
+
+            // Inline connection test feedback card
+            when (val r = testResult) {
+                is ConnectionTestResult.Success -> ConnectionResultCard(
+                    message = r.message,
+                    isSuccess = true
+                )
+                is ConnectionTestResult.Failure -> ConnectionResultCard(
+                    message = r.message,
+                    isSuccess = false
+                )
+                else -> Unit
+            }
         }
     }
 }
+
+@Composable
+private fun ConnectionResultCard(message: String, isSuccess: Boolean) {
+    val containerColor = if (isSuccess)
+        MaterialTheme.colorScheme.primaryContainer
+    else
+        MaterialTheme.colorScheme.errorContainer
+    val contentColor = if (isSuccess)
+        MaterialTheme.colorScheme.onPrimaryContainer
+    else
+        MaterialTheme.colorScheme.onErrorContainer
+
+    Surface(
+        color = containerColor,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = if (isSuccess) "✓" else "✗",
+                color = contentColor,
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                text = message,
+                color = contentColor,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+

@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.felix.occlient.data.model.Session
+import com.felix.occlient.data.model.SessionType
 import com.felix.occlient.viewmodel.HomeViewModel
 import java.text.SimpleDateFormat
 import java.util.*
@@ -97,36 +98,88 @@ fun HomeScreen(
     }
 
     if (showNewSessionDialog) {
-        AlertDialog(
-            onDismissRequest = { showNewSessionDialog = false; newSessionName = "" },
-            title = { Text("New Session") },
-            text = {
+        NewSessionDialog(
+            onDismiss = { showNewSessionDialog = false; newSessionName = "" },
+            onCreate = { name, sessionType ->
+                viewModel.createSession(name.trim(), sessionType) { sessionId ->
+                    showNewSessionDialog = false
+                    newSessionName = ""
+                    onNavigateToChat(sessionId)
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun NewSessionDialog(
+    onDismiss: () -> Unit,
+    onCreate: (String, SessionType) -> Unit
+) {
+    var sessionName by remember { mutableStateOf("") }
+    var selectedType by remember { mutableStateOf(SessionType.RUN) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("New Session") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
-                    value = newSessionName,
-                    onValueChange = { newSessionName = it },
+                    value = sessionName,
+                    onValueChange = { sessionName = it },
                     label = { Text("Session name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        if (newSessionName.isNotBlank()) {
-                            viewModel.createSession(newSessionName.trim()) { sessionId ->
-                                showNewSessionDialog = false
-                                newSessionName = ""
-                                onNavigateToChat(sessionId)
-                            }
+                Text("Session type", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SessionType.entries.forEach { type ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        RadioButton(
+                            selected = selectedType == type,
+                            onClick = { selectedType = type }
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Column {
+                            Text(
+                                text = type.label,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = type.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
-                ) { Text("Create") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showNewSessionDialog = false; newSessionName = "" }) { Text("Cancel") }
+                }
             }
-        )
-    }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (sessionName.isNotBlank()) onCreate(sessionName, selectedType)
+                }
+            ) { Text("Create") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+/** Human-readable label shown in the session type picker and session card. */
+val SessionType.label: String get() = when (this) {
+    SessionType.RUN -> "opencode run"
+    SessionType.SERVE -> "opencode serve"
+}
+
+/** Short description shown below the label in the session type picker. */
+val SessionType.description: String get() = when (this) {
+    SessionType.RUN -> "Interactive TUI session (SSH + opencode run)"
+    SessionType.SERVE -> "Connect to a running opencode serve instance (SSH)"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -150,15 +203,44 @@ fun SessionCard(session: Session, onClick: () -> Unit, onDelete: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text(
-                    "${session.messageCount} messages",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "${session.messageCount} messages",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    SessionTypeBadge(session.sessionType)
+                }
             }
             IconButton(onClick = onDelete) {
                 Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
             }
         }
+    }
+}
+
+/** Small pill badge that shows the session type. */
+@Composable
+private fun SessionTypeBadge(type: SessionType) {
+    Surface(
+        color = when (type) {
+            SessionType.RUN -> MaterialTheme.colorScheme.primaryContainer
+            SessionType.SERVE -> MaterialTheme.colorScheme.tertiaryContainer
+        },
+        shape = MaterialTheme.shapes.small,
+        tonalElevation = 0.dp
+    ) {
+        Text(
+            text = type.label,
+            style = MaterialTheme.typography.labelSmall,
+            color = when (type) {
+                SessionType.RUN -> MaterialTheme.colorScheme.onPrimaryContainer
+                SessionType.SERVE -> MaterialTheme.colorScheme.onTertiaryContainer
+            },
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
     }
 }
