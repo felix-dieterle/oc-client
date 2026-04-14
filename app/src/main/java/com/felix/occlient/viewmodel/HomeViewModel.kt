@@ -3,6 +3,7 @@ package com.felix.occlient.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.felix.occlient.data.model.Session
+import com.felix.occlient.data.model.SessionType
 import com.felix.occlient.data.repository.SessionRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,10 +21,10 @@ class HomeViewModel(private val repository: SessionRepository) : ViewModel() {
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
-    fun createSession(name: String, onCreated: (String) -> Unit) {
+    fun createSession(name: String, sessionType: SessionType = SessionType.RUN, onCreated: (String) -> Unit) {
         viewModelScope.launch {
             try {
-                val session = repository.createSession(name)
+                val session = repository.createSession(name, sessionType)
                 onCreated(session.id)
             } catch (e: Exception) {
                 _error.value = "Failed to create session: ${e.message}"
