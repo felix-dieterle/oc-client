@@ -89,4 +89,26 @@ class OpencodeProtocolTest {
         assertEquals("", result.assistantText)
         assertEquals(listOf("@felix-user ➜ /workspaces/oc-client (feature/x) $"), result.droppedPromptLines)
     }
+
+    @Test
+    fun parseAssistantOutput_filtersWindowsPromptWithUsername() {
+        val pending = mutableMapOf("opencode-cli run" to 1)
+        val raw = "felix d@DESKTOP-1PFCUFI C:\\Users\\Felix D>opencode-cli run \"was ist 2+2?\"\n4\nfelix d@DESKTOP-1PFCUFI C:\\Users\\Felix D>\n"
+
+        val result = OpencodeProtocol.parseAssistantOutput(raw, pending)
+
+        assertEquals("4", result.assistantText)
+        assertTrue(result.sawShellPrompt)
+        assertTrue(result.droppedEchoLines.isNotEmpty())
+        assertTrue(result.droppedPromptLines.isNotEmpty())
+    }
+
+    @Test
+    fun parseAssistantOutput_filtersWindowsBootBanner() {
+        val raw = "Microsoft Windows [Version 10.0.19045.6466]\n(c) Microsoft Corporation. Alle Rechte vorbehalten.\n4\n"
+
+        val result = OpencodeProtocol.parseAssistantOutput(raw, mutableMapOf())
+
+        assertEquals("4", result.assistantText)
+    }
 }

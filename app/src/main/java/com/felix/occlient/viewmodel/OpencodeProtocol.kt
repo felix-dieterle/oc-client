@@ -19,8 +19,9 @@ internal data class ProtocolParseResult(
  */
 internal object OpencodeProtocol {
     // Windows cmd/PowerShell: optional "PS " prefix, optional "user@host " prefix, then drive:\path>
+    // Simplified: matches any line with drive letter and > (Windows 10/11 style)
     private val WINDOWS_SHELL_PROMPT_REGEX = Regex(
-        """^(?:PS )?(?:[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+ )?[A-Za-z]:\\[^\n]*>\s*$"""
+        """^(?:PS )?(?:[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+ )?[A-Za-z]:.*>?\s*$"""
     )
 
     // Linux/macOS bash/zsh standard format: user@host:/path$ or user@host:/path#
@@ -66,11 +67,17 @@ internal object OpencodeProtocol {
             val line = rawLine.trim()
             if (line.isEmpty()) return@filter false
 
+            // Skip Windows boot banner lines
+            if (line.startsWith("Microsoft Windows") || line.startsWith("(c) Microsoft Corporation")) {
+                return@filter false
+            }
+
             val echoedCmd: String? = pendingEchoCommands[line]
                 ?.let { line }
-                ?: pendingEchoCommands.keys.asSequence().firstOrNull { cmd ->
-                    matchesShellPromptEcho(line, cmd)
-                }
+                ?: pendingEchoCommands.entries.asSequence().firstOrNull { (cmd, _) ->
+                    matchesShellPromptEcho(line, cmd) || line.equals(cmd, ignoreCase = true) ||
+                        (line.contains(">") && line.substringAfter(">").trim().equals(cmd, ignoreCase = true))
+                }?.key
 
             if (echoedCmd != null) {
                 droppedEchoLines += line
@@ -80,6 +87,13 @@ internal object OpencodeProtocol {
             }
 
             if (isShellPromptLine(line)) {
+                sawShellPrompt = true
+                droppedPromptLines += line
+                return@filter false
+            }
+
+            // Also filter lines containing Windows prompt markers (e.g., "4\nfelix d@DESKTOP>")
+            if (line.contains(">") && containsHostPrompt(line)) {
                 sawShellPrompt = true
                 droppedPromptLines += line
                 return@filter false
@@ -129,6 +143,15 @@ internal object OpencodeProtocol {
         WINDOWS_SHELL_PROMPT_REGEX.matches(line) ||
             UNIX_SHELL_PROMPT_REGEX.matches(line) ||
             CODESPACE_PROMPT_REGEX.matches(line)
+
+    /**
+     * Checks if line contains a host-based prompt pattern (e.g., "user@host>" on Windows)
+     */
+    private fun containsHostPrompt(line: String): Boolean {
+        val lower = line.lowercase()
+        return lower.contains("@deskt") || lower.contains("@mach") ||
+            lower.contains("@local") || lower.contains("c:\\") || lower.contains("/home/")
+    }
 
     /**
      * True when [line] is a prompt-prefixed echo of [cmd].
